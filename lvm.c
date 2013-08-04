@@ -344,6 +344,7 @@ void luaV_concat (lua_State *L, int total) {
 void luaV_objlen (lua_State *L, StkId ra, const TValue *rb) {
   const TValue *tm;
   switch (ttypenv(rb)) {
+    // __len存在,优先调用
     case LUA_TTABLE: {
       Table *h = hvalue(rb);
       tm = fasttm(L, h->metatable, TM_LEN);
@@ -355,6 +356,7 @@ void luaV_objlen (lua_State *L, StkId ra, const TValue *rb) {
       setnvalue(ra, cast_num(tsvalue(rb)->len));
       return;
     }
+    // 其余类型:有__len则调用,无则异常
     default: {  /* try metamethod */
       tm = luaT_gettmbyobj(L, rb, TM_LEN);
       if (ttisnil(tm))  /* no metamethod? */

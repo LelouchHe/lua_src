@@ -960,6 +960,7 @@ LUA_API int lua_getctx (lua_State *L, int *ctx) {
 }
 
 
+//TODO: ctx/k分别是什么含义
 LUA_API void lua_callk (lua_State *L, int nargs, int nresults, int ctx,
                         lua_CFunction k) {
   StkId func;
@@ -986,6 +987,7 @@ LUA_API void lua_callk (lua_State *L, int nargs, int nresults, int ctx,
 /*
 ** Execute a protected call.
 */
+// 仅仅是为了封装而已
 struct CallS {  /* data to `f_call' */
   StkId func;
   int nresults;
@@ -998,7 +1000,9 @@ static void f_call (lua_State *L, void *ud) {
 }
 
 
-
+// pcall下所有的异常都会longjmp到pcall内部
+// 所以可以捕获
+// pcallk -> luaD_pcall -> luaD_rawrunprotected(setjmp)
 LUA_API int lua_pcallk (lua_State *L, int nargs, int nresults, int errfunc,
                         int ctx, lua_CFunction k) {
   struct CallS c;
@@ -1044,6 +1048,8 @@ LUA_API int lua_pcallk (lua_State *L, int nargs, int nresults, int errfunc,
 }
 
 
+// top-1 = lclosure
+// data是reader使用的参数
 LUA_API int lua_load (lua_State *L, lua_Reader reader, void *data,
                       const char *chunkname, const char *mode) {
   ZIO z;
@@ -1054,6 +1060,7 @@ LUA_API int lua_load (lua_State *L, lua_Reader reader, void *data,
   status = luaD_protectedparser(L, &z, chunkname, mode);
   if (status == LUA_OK) {  /* no errors? */
     LClosure *f = clLvalue(L->top - 1);  /* get newly created function */
+    // _ENV怎么办?这里直接就是全局_G
     if (f->nupvalues == 1) {  /* does it have one upvalue? */
       /* get global table from registry */
       Table *reg = hvalue(&G(L)->l_registry);
@@ -1068,6 +1075,8 @@ LUA_API int lua_load (lua_State *L, lua_Reader reader, void *data,
 }
 
 
+// 类似load,并没有指明dump的去向(这个是writer关心的)
+// data仍然是writer使用的参数
 LUA_API int lua_dump (lua_State *L, lua_Writer writer, void *data) {
   int status;
   TValue *o;
@@ -1176,6 +1185,7 @@ LUA_API int lua_gc (lua_State *L, int what, int data) {
 */
 
 
+// msg入栈,longjmp/abort
 LUA_API int lua_error (lua_State *L) {
   lua_lock(L);
   api_checknelems(L, 1);
@@ -1185,6 +1195,9 @@ LUA_API int lua_error (lua_State *L) {
 }
 
 
+// in idx.next
+// top-1 = key
+// top   = value
 LUA_API int lua_next (lua_State *L, int idx) {
   StkId t;
   int more;
@@ -1193,6 +1206,7 @@ LUA_API int lua_next (lua_State *L, int idx) {
   api_check(L, ttistable(t), "table expected");
   more = luaH_next(L, hvalue(t), L->top - 1);
   if (more) {
+    // luaH_next设置了top-1 = key, top = value
     api_incr_top(L);
   }
   else  /* no more elements */
@@ -1202,6 +1216,8 @@ LUA_API int lua_next (lua_State *L, int idx) {
 }
 
 
+// pop 待连接str
+// push最后结果
 LUA_API void lua_concat (lua_State *L, int n) {
   lua_lock(L);
   api_checknelems(L, n);
@@ -1218,6 +1234,7 @@ LUA_API void lua_concat (lua_State *L, int n) {
 }
 
 
+// top = #idx
 LUA_API void lua_len (lua_State *L, int idx) {
   StkId t;
   lua_lock(L);
@@ -1246,6 +1263,7 @@ LUA_API void lua_setallocf (lua_State *L, lua_Alloc f, void *ud) {
 }
 
 
+// push userdata
 LUA_API void *lua_newuserdata (lua_State *L, size_t size) {
   Udata *u;
   lua_lock(L);
@@ -1284,6 +1302,7 @@ static const char *aux_upvalue (StkId fi, int n, TValue **val,
 }
 
 
+// top = funcindex.upv[n]
 LUA_API const char *lua_getupvalue (lua_State *L, int funcindex, int n) {
   const char *name;
   TValue *val = NULL;  /* to avoid warnings */
@@ -1298,6 +1317,8 @@ LUA_API const char *lua_getupvalue (lua_State *L, int funcindex, int n) {
 }
 
 
+// funcindex.upv[n] = top-1
+// pop 1 如果有该upv
 LUA_API const char *lua_setupvalue (lua_State *L, int funcindex, int n) {
   const char *name;
   TValue *val = NULL;  /* to avoid warnings */
@@ -1328,6 +1349,7 @@ static UpVal **getupvalref (lua_State *L, int fidx, int n, LClosure **pf) {
 }
 
 
+// = &fidx.upv[n]
 LUA_API void *lua_upvalueid (lua_State *L, int fidx, int n) {
   StkId fi = index2addr(L, fidx);
   switch (ttype(fi)) {
@@ -1347,6 +1369,7 @@ LUA_API void *lua_upvalueid (lua_State *L, int fidx, int n) {
 }
 
 
+// fidx1.upv[n1] = fidx2.upv[n2]
 LUA_API void lua_upvaluejoin (lua_State *L, int fidx1, int n1,
                                             int fidx2, int n2) {
   LClosure *f1;

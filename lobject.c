@@ -258,6 +258,7 @@ const char *luaO_pushfstring (lua_State *L, const char *fmt, ...) {
 
 void luaO_chunkid (char *out, const char *source, size_t bufflen) {
   size_t l = strlen(source);
+  // '='后直接跟着源码
   if (*source == '=') {  /* 'literal' source */
     if (l <= bufflen)  /* small enough? */
       memcpy(out, source + 1, l * sizeof(char));
@@ -266,15 +267,20 @@ void luaO_chunkid (char *out, const char *source, size_t bufflen) {
       *out = '\0';
     }
   }
+  // '@'后直接跟着源代码文件名
+  // ... | source_file_name
   else if (*source == '@') {  /* file name */
     if (l <= bufflen)  /* small enough? */
       memcpy(out, source + 1, l * sizeof(char));
     else {  /* add '...' before rest of name */
       addstr(out, RETS, LL(RETS));
       bufflen -= LL(RETS);
+      // TODO: 这是什么节奏
       memcpy(out, source + 1 + l - bufflen, bufflen * sizeof(char));
     }
   }
+  // 纯字符串
+  // [string " | first_line | "]
   else {  /* string; format as [string "source"] */
     const char *nl = strchr(source, '\n');  /* find first new line (if any) */
     addstr(out, PRE, LL(PRE));  /* add prefix */

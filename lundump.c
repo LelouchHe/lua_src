@@ -42,6 +42,8 @@ static l_noret error(LoadState* S, const char* why)
 #define luai_verifycode(L,b,f)	/* empty */
 #endif
 
+// 带buffer的底层读取函数
+// 使用lua_load传入的reader
 static void LoadBlock(LoadState* S, void* b, size_t size)
 {
  if (luaZ_read(S->Z,b,size)!=0) error(S,"truncated");
@@ -69,6 +71,7 @@ static lua_Number LoadNumber(LoadState* S)
  return x;
 }
 
+// size | str
 static TString* LoadString(LoadState* S)
 {
  size_t size;
@@ -83,6 +86,7 @@ static TString* LoadString(LoadState* S)
  }
 }
 
+// #instruction | inst1 | inst2 | ...
 static void LoadCode(LoadState* S, Proto* f)
 {
  int n=LoadInt(S);
@@ -93,6 +97,9 @@ static void LoadCode(LoadState* S, Proto* f)
 
 static void LoadFunction(LoadState* S, Proto* f);
 
+// #const | type1 | value1 | type2 | value2 | ...
+// #func  | func1 | func2
+// func也算常量吧
 static void LoadConstants(LoadState* S, Proto* f)
 {
  int i,n;
@@ -132,6 +139,7 @@ static void LoadConstants(LoadState* S, Proto* f)
  }
 }
 
+// #upv | instack1 | idx1 | instack2 | idx2 | ...
 static void LoadUpvalues(LoadState* S, Proto* f)
 {
  int i,n;
@@ -146,6 +154,9 @@ static void LoadUpvalues(LoadState* S, Proto* f)
  }
 }
 
+// source | #line | line_map1 | line_map2 | ... 
+// #local_var | var1_name | var1_start | var1_end | ...
+// #upv | upv1_name | upv2_name | ...
 static void LoadDebug(LoadState* S, Proto* f)
 {
  int i,n;
@@ -168,6 +179,7 @@ static void LoadDebug(LoadState* S, Proto* f)
  for (i=0; i<n; i++) f->upvalues[i].name=LoadString(S);
 }
 
+// code | const | upvalue | debug
 static void LoadFunction(LoadState* S, Proto* f)
 {
  f->linedefined=LoadInt(S);
@@ -175,9 +187,13 @@ static void LoadFunction(LoadState* S, Proto* f)
  f->numparams=LoadByte(S);
  f->is_vararg=LoadByte(S);
  f->maxstacksize=LoadByte(S);
+ // 指令
  LoadCode(S,f);
+ // 常量,会递归LoadFunction
  LoadConstants(S,f);
+ // upvalue
  LoadUpvalues(S,f);
+ // 调试信息: 行映射信息,局部变量,upv名
  LoadDebug(S,f);
 }
 
@@ -192,6 +208,7 @@ static void LoadHeader(LoadState* S)
  lu_byte h[LUAC_HEADERSIZE];
  lu_byte s[LUAC_HEADERSIZE];
  luaU_header(h);
+ // \esc是第一个字符
  memcpy(s,h,sizeof(char));			/* first char already read */
  LoadBlock(S,s+sizeof(char),LUAC_HEADERSIZE-sizeof(char));
  if (memcmp(h,s,N0)==0) return;
@@ -203,6 +220,7 @@ static void LoadHeader(LoadState* S)
 /*
 ** load precompiled chunk
 */
+// top-1 = cl
 Closure* luaU_undump (lua_State* L, ZIO* Z, Mbuffer* buff, const char* name)
 {
  LoadState S;
@@ -216,10 +234,12 @@ Closure* luaU_undump (lua_State* L, ZIO* Z, Mbuffer* buff, const char* name)
  S.L=L;
  S.Z=Z;
  S.b=buff;
+ // 读取header(固定的),并验证
  LoadHeader(&S);
  cl=luaF_newLclosure(L,1);
  setclLvalue(L,L->top,cl); incr_top(L);
  cl->l.p=luaF_newproto(L);
+ // 读取function
  LoadFunction(&S,cl->l.p);
  if (cl->l.p->sizeupvalues != 1)
  {
@@ -241,6 +261,8 @@ Closure* luaU_undump (lua_State* L, ZIO* Z, Mbuffer* buff, const char* name)
 * if you change the code below be sure to update LoadHeader and FORMAT above
 * and LUAC_HEADERSIZE in lundump.h
 */
+// 预编译的trunk头部是固定的
+// 这个是设置头部的
 void luaU_header (lu_byte* h)
 {
  int x=1;

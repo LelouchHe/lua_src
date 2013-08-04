@@ -166,6 +166,8 @@ static int findindex (lua_State *L, Table *t, StkId key) {
 }
 
 
+// 得到key的下标,遍历array/hash找到第一个非nil的值
+// push key/value
 int luaH_next (lua_State *L, Table *t, StkId key) {
   int i = findindex(L, t, key);  /* find original element */
   for (i++; i < t->sizearray; i++) {  /* try first array part */

@@ -75,6 +75,7 @@ typedef union GCObject GCObject;
 ** Common Header for all collectable objects (in macro form, to be
 ** included in other objects)
 */
+// 链表指针,类型,gc标记
 #define CommonHeader	GCObject *next; lu_byte tt; lu_byte marked
 
 
@@ -102,6 +103,7 @@ typedef union Value Value;
 ** an actual value plus a tag with its type.
 */
 
+// 值,类型
 #define TValuefields	Value value_; int tt_
 
 typedef struct lua_TValue TValue;
@@ -389,6 +391,8 @@ typedef struct lua_TValue TValue;
 */
 
 
+// p/b/f/n都是基本类型,不需要gc
+// 剩余的都是gc
 union Value {
   GCObject *gc;    /* collectable objects */
   void *p;         /* light userdata */
@@ -520,6 +524,7 @@ typedef struct UpVal {
 typedef struct CClosure {
   ClosureHeader;
   lua_CFunction f;
+  // c.upv是value实体
   TValue upvalue[1];  /* list of upvalues */
 } CClosure;
 
@@ -527,6 +532,7 @@ typedef struct CClosure {
 typedef struct LClosure {
   ClosureHeader;
   struct Proto *p;
+  // l.upv只是指针
   UpVal *upvals[1];  /* list of upvalues */
 } LClosure;
 
@@ -567,7 +573,7 @@ typedef struct Table {
   lu_byte lsizenode;  /* log2 of size of `node' array */
   struct Table *metatable;
   TValue *array;  /* array part */
-  Node *node;
+  Node *node; // hash表
   Node *lastfree;  /* any free position is before this position */
   GCObject *gclist;
   int sizearray;  /* size of `array' array */

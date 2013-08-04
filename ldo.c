@@ -100,6 +100,7 @@ static void seterrorobj (lua_State *L, int errcode, StkId oldtop) {
 }
 
 
+// 本state的错误处理 -> main错误处理 -> panic
 l_noret luaD_throw (lua_State *L, int errcode) {
   if (L->errorJmp) {  /* thread has an error handler? */
     L->errorJmp->status = errcode;  /* set status */
@@ -122,6 +123,9 @@ l_noret luaD_throw (lua_State *L, int errcode) {
 }
 
 
+// 利用setjmp/longjmp模拟异常抛出
+// 异常时仍在跳回这里
+// lua_error -> luaG_errormsg -> luaD_throw
 int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
   unsigned short oldnCcalls = L->nCcalls;
   struct lua_longjmp lj;
@@ -300,7 +304,7 @@ static StkId tryfuncTM (lua_State *L, StkId func) {
 ** returns true if function has been executed (C function)
 */
 
-// | func | arg0 | arg1 | ... | top | ...(LUA_MINSTACK) | ci->top
+// | func(ci->func) | arg0 | arg1 | ... | top | ...(LUA_MINSTACK) | ci->top
 // 调用函数受限于func-ci->top之间(应该可以动态扩展的吧)
 // 返回结果也是存在这里
 int luaD_precall (lua_State *L, StkId func, int nresults) {
@@ -621,6 +625,8 @@ int luaD_pcall (lua_State *L, Pfunc func, void *u,
   if (status != LUA_OK) {  /* an error occurred? */
     StkId oldtop = restorestack(L, old_top);
     luaF_close(L, oldtop);  /* close possible pending closures */
+
+    // 错误入栈
     seterrorobj(L, status, oldtop);
     L->ci = old_ci;
     L->allowhook = old_allowhooks;
@@ -659,6 +665,7 @@ static void f_parser (lua_State *L, void *ud) {
   Closure *cl;
   struct SParser *p = cast(struct SParser *, ud);
   int c = zgetc(p->z);  /* read first character */
+  // 二进制(有固定格式)
   if (c == LUA_SIGNATURE[0]) {
     checkmode(L, p->mode, "binary");
     cl = luaU_undump(L, p->z, &p->buff, p->name);
@@ -667,6 +674,7 @@ static void f_parser (lua_State *L, void *ud) {
     checkmode(L, p->mode, "text");
     cl = luaY_parser(L, p->z, &p->buff, &p->dyd, p->name, c);
   }
+  // meaningless?
   lua_assert(cl->l.nupvalues == cl->l.p->sizeupvalues);
   for (i = 0; i < cl->l.nupvalues; i++) {  /* initialize upvalues */
     UpVal *up = luaF_newupval(L);
