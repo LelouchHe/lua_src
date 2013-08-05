@@ -114,6 +114,7 @@ static TString *createstrobj (lua_State *L, const char *str, size_t l,
 /*
 ** creates a new short string, inserting it into string table
 */
+// 简单的开链法
 static TString *newshrstr (lua_State *L, const char *str, size_t l,
                                        unsigned int h) {
   GCObject **list;  /* (pointer to) list where it will be inserted */

@@ -376,6 +376,7 @@ static void rehash (lua_State *L, Table *t, const TValue *ek) {
 Table *luaH_new (lua_State *L) {
   Table *t = &luaC_newobj(L, LUA_TTABLE, sizeof(Table), NULL, 0)->h;
   t->metatable = NULL;
+  // 默认metamethod全有
   t->flags = cast_byte(~0);
   t->array = NULL;
   t->sizearray = 0;

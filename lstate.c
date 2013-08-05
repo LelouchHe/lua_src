@@ -67,6 +67,7 @@ typedef struct LX {
 /*
 ** Main thread combines a thread state and the global state
 */
+// 这意味着主线程会创建主线程的lua_State和golbal_State
 typedef struct LG {
   LX l;
   global_State g;
@@ -109,6 +110,8 @@ void luaE_setdebt (global_State *g, l_mem debt) {
 }
 
 
+// 新建CallInfo,并链接入L->ci表
+// 配合next_ci(见ldo.c)(在这个宏里将L->ci指向新ci)
 CallInfo *luaE_extendCI (lua_State *L) {
   CallInfo *ci = luaM_new(L, CallInfo);
   lua_assert(L->ci->next == NULL);
@@ -119,6 +122,7 @@ CallInfo *luaE_extendCI (lua_State *L) {
 }
 
 
+// 将L->ci全部释放
 void luaE_freeCI (lua_State *L) {
   CallInfo *ci = L->ci;
   CallInfo *next = ci->next;
@@ -133,18 +137,22 @@ void luaE_freeCI (lua_State *L) {
 static void stack_init (lua_State *L1, lua_State *L) {
   int i; CallInfo *ci;
   /* initialize stack array */
+  // 初始栈大小:40
   L1->stack = luaM_newvector(L, BASIC_STACK_SIZE, TValue);
   L1->stacksize = BASIC_STACK_SIZE;
   for (i = 0; i < BASIC_STACK_SIZE; i++)
     setnilvalue(L1->stack + i);  /* erase new stack */
   L1->top = L1->stack;
+  // 空余EXTRA_STACK备用
   L1->stack_last = L1->stack + L1->stacksize - EXTRA_STACK;
   /* initialize first ci */
   ci = &L1->base_ci;
   ci->next = ci->previous = NULL;
   ci->callstatus = 0;
   ci->func = L1->top;
+  // base_ci指向为nil,仅作为哨兵而已
   setnilvalue(L1->top++);  /* 'function' entry for this 'ci' */
+  // 惯例,每个ci最小LUA_MINSTACK(20)
   ci->top = L1->top + LUA_MINSTACK;
   L1->ci = ci;
 }
@@ -167,12 +175,14 @@ static void init_registry (lua_State *L, global_State *g) {
   /* create registry */
   Table *registry = luaH_new(L);
   sethvalue(L, &g->l_registry, registry);
+  // 大小为LUA_RIDX_LAST(2)的数组,0hash
   luaH_resize(L, registry, LUA_RIDX_LAST, 0);
   /* registry[LUA_RIDX_MAINTHREAD] = L */
   setthvalue(L, &mt, L);
   luaH_setint(L, registry, LUA_RIDX_MAINTHREAD, &mt);
   /* registry[LUA_RIDX_GLOBALS] = table of globals */
   sethvalue(L, &mt, luaH_new(L));
+  // global表没有值
   luaH_setint(L, registry, LUA_RIDX_GLOBALS, &mt);
 }
 

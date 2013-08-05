@@ -124,7 +124,10 @@ typedef struct global_State {
   lu_byte gckind;  /* kind of GC running */
   lu_byte gcrunning;  /* true if GC is running */
   int sweepstrgc;  /* position of sweep in `strt' */
+  
+  // 默认obj的嵌入链表
   GCObject *allgc;  /* list of all collectable objects */
+
   GCObject *finobj;  /* list of collectable objects with finalizers */
   GCObject **sweepgc;  /* current position of sweep in list 'allgc' */
   GCObject **sweepfin;  /* current position of sweep in list 'finobj' */
