@@ -42,6 +42,14 @@ const char lua_ident[] =
 
 #define api_checkvalidindex(L, i)  api_check(L, isvalid(i), "invalid index")
 
+// api栈操作规则
+// 当参数位于栈顶时,参数出栈,结果入栈
+// 或者说
+// 参数不在api参数列表中时,参数出栈,结果入栈
+// 在api参数列表中,直接结果入栈
+//
+// lua的api名称取的有些乱
+
 
 // 从idx索引取得对应的值
 // stack 构造
