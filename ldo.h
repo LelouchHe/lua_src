@@ -19,7 +19,9 @@
 
 #define incr_top(L) {L->top++; luaD_checkstack(L,0);}
 
+// 计算偏移
 #define savestack(L,p)		((char *)(p) - (char *)L->stack)
+// 恢复偏移
 #define restorestack(L,n)	((TValue *)((char *)L->stack + (n)))
 
 

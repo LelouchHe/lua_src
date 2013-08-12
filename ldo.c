@@ -96,6 +96,7 @@ static void seterrorobj (lua_State *L, int errcode, StkId oldtop) {
       break;
     }
   }
+  // 恢复top,丢弃错误msg以上的所有内容
   L->top = oldtop + 1;
 }
 
@@ -143,12 +144,19 @@ int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
 /* }====================================================== */
 
 
+// 可以看到,如果top是偏移而不是指针,有很多好处(此处的操作就免了)
+// 但为什么没有呢?
 static void correctstack (lua_State *L, TValue *oldstack) {
   CallInfo *ci;
   GCObject *up;
+  // 此处尚没有修正L->top
+  // 还有oldstack一样,指向旧stack
   L->top = (L->top - oldstack) + L->stack;
+  // 调整原则:偏移是一致的
+  // 调整open upv的位置
   for (up = L->openupval; up != NULL; up = up->gch.next)
     gco2uv(up)->v = (gco2uv(up)->v - oldstack) + L->stack;
+  // 调整ci位置
   for (ci = L->ci; ci != NULL; ci = ci->previous) {
     ci->top = (ci->top - oldstack) + L->stack;
     ci->func = (ci->func - oldstack) + L->stack;
@@ -159,6 +167,7 @@ static void correctstack (lua_State *L, TValue *oldstack) {
 
 
 /* some space for error handling */
+// 错误时,分配的堆栈大小
 #define ERRORSTACKSIZE	(LUAI_MAXSTACK + 200)
 
 
@@ -196,6 +205,7 @@ void luaD_growstack (lua_State *L, int n) {
 }
 
 
+// ci->top有可能超过top(预先分配的空间没有用尽,就会这样)
 static int stackinuse (lua_State *L) {
   CallInfo *ci;
   StkId lim = L->top;
@@ -207,6 +217,7 @@ static int stackinuse (lua_State *L) {
 }
 
 
+// inuse <= stacksize
 void luaD_shrinkstack (lua_State *L) {
   int inuse = stackinuse(L);
   int goodsize = inuse + (inuse / 8) + 2*EXTRA_STACK;
@@ -251,6 +262,8 @@ void luaD_hook (lua_State *L, int event, int line) {
 static void callhook (lua_State *L, CallInfo *ci) {
   int hook = LUA_HOOKCALL;
   ci->u.l.savedpc++;  /* hooks assume 'pc' is already incremented */
+  // tailcall会破坏堆栈
+  // 这可能是需要特别处理的原因
   if (isLua(ci->previous) &&
       GET_OPCODE(*(ci->previous->u.l.savedpc - 1)) == OP_TAILCALL) {
     ci->callstatus |= CIST_TAIL;
@@ -313,8 +326,11 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
   int n;  /* number of arguments (Lua) or returns (C) */
 
   // funcr是当前func距离当前栈底的大小
+  // 即偏移
   ptrdiff_t funcr = savestack(L, func);
   switch (ttype(func)) {
+    // C函数直接调用
+    // 不涉及vm
     case LUA_TLCF:  /* light C function */
       f = fvalue(func);
       goto Cfunc;
@@ -521,6 +537,7 @@ static void resume (lua_State *L, void *ud) {
   CallInfo *ci = L->ci;
   if (nCcalls >= LUAI_MAXCCALLS)
     resume_error(L, "C stack overflow", firstArg);
+  // new
   if (L->status == LUA_OK) {  /* may be starting a coroutine */
     if (ci != &L->base_ci)  /* not in base level? */
       resume_error(L, "cannot resume non-suspended coroutine", firstArg);
@@ -530,6 +547,7 @@ static void resume (lua_State *L, void *ud) {
   }
   else if (L->status != LUA_YIELD)
     resume_error(L, "cannot resume dead coroutine", firstArg);
+  // suspended
   else {  /* resuming from previous yield */
     L->status = LUA_OK;
     ci->func = restorestack(L, ci->extra);
