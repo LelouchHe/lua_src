@@ -86,6 +86,8 @@ void luaF_freeupval (lua_State *L, UpVal *uv) {
 }
 
 
+// level之上的upv全部清除
+// 只有dead的才会释放,其余的从L->uvhead -> g->allgc
 void luaF_close (lua_State *L, StkId level) {
   UpVal *uv;
   global_State *g = G(L);

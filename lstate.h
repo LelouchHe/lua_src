@@ -168,7 +168,10 @@ struct lua_State {
   unsigned short nCcalls;  /* number of nested C calls */
   lu_byte hookmask;
   lu_byte allowhook;
+  // 触发debug的count值
   int basehookcount;
+  // 按count来debug时,当前剩余count值
+  // 当hookcount==0时,触发
   int hookcount;
   lua_Hook hook;
   GCObject *openupval;  /* list of open upvalues in this stack */

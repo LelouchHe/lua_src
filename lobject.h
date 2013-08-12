@@ -477,6 +477,9 @@ typedef struct Proto {
   TValue *k;  /* constants used by the function */
   Instruction *code;
   struct Proto **p;  /* functions defined inside the function */
+  // opcode -> line
+  // 会从指令数映射到行数
+  // debug时用
   int *lineinfo;  /* map from opcodes to source lines (debug information) */
   LocVar *locvars;  /* information about local variables (debug information) */
   Upvaldesc *upvalues;  /* upvalue information */

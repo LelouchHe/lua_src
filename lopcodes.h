@@ -29,6 +29,10 @@
 ===========================================================================*/
 
 
+// iABC : | B  | C | A | opc |
+// iABx : | B      | A | opc |
+// iAsBx: | sB     | A | opc |
+// iAx  : |          A | opc |
 enum OpMode {iABC, iABx, iAsBx, iAx};  /* basic instruction format */
 
 

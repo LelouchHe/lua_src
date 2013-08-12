@@ -61,6 +61,7 @@ static void traceexec (lua_State *L) {
   CallInfo *ci = L->ci;
   lu_byte mask = L->hookmask;
   int counthook = ((mask & LUA_MASKCOUNT) && L->hookcount == 0);
+  // ==0,要重置
   if (counthook)
     resethookcount(L);  /* reset count */
   if (ci->callstatus & CIST_HOOKYIELD) {  /* called hook last time? */
@@ -69,8 +70,10 @@ static void traceexec (lua_State *L) {
   }
   if (counthook)
     luaD_hook(L, LUA_HOOKCOUNT, -1);  /* call count hook */
+  // 按行debug触发
   if (mask & LUA_MASKLINE) {
     Proto *p = ci_func(ci)->p;
+    // npc表示当前执行的指令数
     int npc = pcRel(ci->u.l.savedpc, p);
     int newline = getfuncline(p, npc);
     if (npc == 0 ||  /* call linehook when enter a new function, */
@@ -80,6 +83,8 @@ static void traceexec (lua_State *L) {
   }
   L->oldpc = ci->u.l.savedpc;
   if (L->status == LUA_YIELD) {  /* did hook yield? */
+    // 下次resume会重新执行
+    // 所以全部undo
     if (counthook)
       L->hookcount = 1;  /* undo decrement to zero */
     ci->u.l.savedpc--;  /* undo increment (resume will increment it again) */
@@ -519,6 +524,8 @@ void luaV_finishOp (lua_State *L) {
 #define donextjump(ci)	{ i = *ci->u.l.savedpc; dojump(ci, i, 1); }
 
 
+// 对于有可能改变base的调用,使用这个来恢复base值
+// 因为很多宏都依赖于base
 #define Protect(x)	{ {x;}; base = ci->u.l.base; }
 
 #define checkGC(L,c)  \
@@ -550,12 +557,16 @@ void luaV_execute (lua_State *L) {
  newframe:  /* reentry point when frame changes (call/return) */
   lua_assert(ci == L->ci);
   cl = clLvalue(ci->func);
+  // k: 常量基址
   k = cl->p->k;
+  // lua函数参数的基址
   base = ci->u.l.base;
   /* main loop of interpreter */
   for (;;) {
+    // savedpc类似与pc,记录当前指令位置
     Instruction i = *(ci->u.l.savedpc++);
     StkId ra;
+    // debug hook
     if ((L->hookmask & (LUA_MASKLINE | LUA_MASKCOUNT)) &&
         (--L->hookcount == 0 || L->hookmask & LUA_MASKLINE)) {
       Protect(traceexec(L));
@@ -676,6 +687,7 @@ void luaV_execute (lua_State *L) {
       vmcase(OP_JMP,
         dojump(ci, i, 0);
       )
+      // 下面都是test+jmp固定格式指令
       vmcase(OP_EQ,
         TValue *rb = RKB(i);
         TValue *rc = RKC(i);
@@ -726,6 +738,11 @@ void luaV_execute (lua_State *L) {
           base = ci->u.l.base;
         }
         else {  /* Lua function */
+          // 还记得么?
+          // 以前的写法是
+          // if (!luaD_precall(L, func, nresults))
+          //    luaV_execute(L)
+          // 但此处本身处于这里,所以称CIST_REENTRY
           ci = L->ci;
           ci->callstatus |= CIST_REENTRY;
           goto newframe;  /* restart luaV_execute over new Lua function */
