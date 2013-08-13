@@ -392,6 +392,8 @@ void luaV_arith (lua_State *L, StkId ra, const TValue *rb,
 ** whether there is a cached closure with the same upvalues needed by
 ** new closure to be created.
 */
+// 同一个Proto,保证了代码之类的一致性
+// upv也一致的话,二者就是完全相同,可以复用的了
 static Closure *getcached (Proto *p, UpVal **encup, StkId base) {
   Closure *c = p->cache;
   if (c != NULL) {  /* is there a cached closure? */
