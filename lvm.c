@@ -422,6 +422,7 @@ static void pushclosure (lua_State *L, Proto *p, UpVal **encup, StkId base,
   Upvaldesc *uv = p->upvalues;
   int i;
   Closure *ncl = luaF_newLclosure(L, nup);
+  // 原型
   ncl->l.p = p;
   setclLvalue(L, ra, ncl);  /* anchor new closure in stack */
   for (i = 0; i < nup; i++) {  /* fill in its upvalues */
@@ -504,10 +505,13 @@ void luaV_finishOp (lua_State *L) {
 #endif
 
 
+// base是当前调用的参数基址
 #define RA(i)	(base+GETARG_A(i))
 /* to be used after possible stack reallocation */
 #define RB(i)	check_exp(getBMode(GET_OPCODE(i)) == OpArgR, base+GETARG_B(i))
 #define RC(i)	check_exp(getCMode(GET_OPCODE(i)) == OpArgR, base+GETARG_C(i))
+// 常量: k + offset
+// 其他: base + offset
 #define RKB(i)	check_exp(getBMode(GET_OPCODE(i)) == OpArgK, \
 	ISK(GETARG_B(i)) ? k+INDEXK(GETARG_B(i)) : base+GETARG_B(i))
 #define RKC(i)	check_exp(getCMode(GET_OPCODE(i)) == OpArgK, \
@@ -561,7 +565,7 @@ void luaV_execute (lua_State *L) {
   cl = clLvalue(ci->func);
   // k: 常量基址
   k = cl->p->k;
-  // lua函数参数的基址
+  // lua函数固定参数的基址
   base = ci->u.l.base;
   /* main loop of interpreter */
   for (;;) {
@@ -575,6 +579,7 @@ void luaV_execute (lua_State *L) {
     }
     /* WARNING: several calls may realloc the stack and invalidate `ra' */
     ra = RA(i);
+    // assert是用来保证WARNING的
     lua_assert(base == ci->u.l.base);
     lua_assert(base <= L->top && L->top < L->stack + L->stacksize);
     vmdispatch (GET_OPCODE(i)) {
@@ -607,6 +612,7 @@ void luaV_execute (lua_State *L) {
       )
       vmcase(OP_GETTABUP,
         int b = GETARG_B(i);
+        // 有函数调用(__index),就肯定可能改变
         Protect(luaV_gettable(L, cl->upvals[b]->v, RKC(i), ra));
       )
       vmcase(OP_GETTABLE,
@@ -731,6 +737,8 @@ void luaV_execute (lua_State *L) {
           donextjump(ci);
         }
       )
+      // 将L->ci替换,重复操作即可
+      // 注意环境的构建
       vmcase(OP_CALL,
         int b = GETARG_B(i);
         int nresults = GETARG_C(i) - 1;
@@ -750,6 +758,8 @@ void luaV_execute (lua_State *L) {
           goto newframe;  /* restart luaV_execute over new Lua function */
         }
       )
+      // 完全替换了caller的栈
+      // debug估计很难
       vmcase(OP_TAILCALL,
         int b = GETARG_B(i);
         if (b != 0) L->top = ra+b;  /* else previous instruction set top */
@@ -794,6 +804,10 @@ void luaV_execute (lua_State *L) {
           goto newframe;  /* restart luaV_execute over new Lua function */
         }
       )
+      // ra  : 控制量
+      // ra+1: limit
+      // ra+2: step
+      // ra+3: 外部控制量(应该和ra类似)
       vmcase(OP_FORLOOP,
         lua_Number step = nvalue(ra+2);
         lua_Number idx = luai_numadd(L, nvalue(ra), step); /* increment index */
@@ -860,9 +874,11 @@ void luaV_execute (lua_State *L) {
         }
         L->top = ci->top;  /* correct top (in case of previous open call) */
       )
+      // Bx是内部定义闭包的index
       vmcase(OP_CLOSURE,
         Proto *p = cl->p->p[GETARG_Bx(i)];
         Closure *ncl = getcached(p, cl->upvals, base);  /* cached closure */
+        // 内部定义闭包,使用当前闭包内的可见upv(cl->upvals)
         if (ncl == NULL)  /* no match? */
           pushclosure(L, p, cl->upvals, base, ra);  /* create a new one */
         else
@@ -872,6 +888,11 @@ void luaV_execute (lua_State *L) {
       vmcase(OP_VARARG,
         int b = GETARG_B(i) - 1;
         int j;
+        // 对于可变参数,base和ci->func的差值是实际参数的个数(虽然固定参数已经被移到base之上了)
+        // 现在栈结构如下
+        // | func | nil | nil | ...(old fixed) | vararg1 | argarg2 | ... | fixed1(base) | fixed2 | ... | fixedn | top |
+        // 具体搬迁过程见luaD_precall
+        // n此时为可变参数个数
         int n = cast_int(base - ci->func) - cl->p->numparams - 1;
         if (b < 0) {  /* B == 0? */
           b = n;  /* get all var. arguments */
@@ -888,6 +909,7 @@ void luaV_execute (lua_State *L) {
           }
         }
       )
+      // 仅在LOADKX和SETLIST中使用
       vmcase(OP_EXTRAARG,
         lua_assert(0);
       )

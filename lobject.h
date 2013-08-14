@@ -494,6 +494,8 @@ typedef struct Proto {
   int linedefined;
   int lastlinedefined;
   GCObject *gclist;
+  // see?? 这个是固定参数个数
+  // 真实参数个数需要从实际调用中来看
   lu_byte numparams;  /* number of fixed parameters */
   lu_byte is_vararg;
   lu_byte maxstacksize;  /* maximum stack used by this function */

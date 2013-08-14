@@ -49,8 +49,11 @@ UpVal *luaF_findupval (lua_State *L, StkId level) {
   GCObject **pp = &L->openupval;
   UpVal *p;
   UpVal *uv;
+  // 看来L->openupval是按照栈上顺序排序的
   while (*pp != NULL && (p = gco2uv(*pp))->v >= level) {
     GCObject *o = obj2gco(p);
+    // 如果相等,就表示不在栈上
+    // 显然不会进入这个函数
     lua_assert(p->v != &p->u.value);
     if (p->v == level) {  /* found a corresponding upvalue? */
       if (isdead(g, o))  /* is it dead? */

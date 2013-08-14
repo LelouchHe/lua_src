@@ -171,6 +171,7 @@ static void correctstack (lua_State *L, TValue *oldstack) {
 #define ERRORSTACKSIZE	(LUAI_MAXSTACK + 200)
 
 
+// 重新分配栈空间
 void luaD_reallocstack (lua_State *L, int newsize) {
   TValue *oldstack = L->stack;
   int lim = L->stacksize;
@@ -206,9 +207,11 @@ void luaD_growstack (lua_State *L, int n) {
 
 
 // ci->top有可能超过top(预先分配的空间没有用尽,就会这样)
+// 因为ci不一定是线性的,所以只考察L->ci是不够的
 static int stackinuse (lua_State *L) {
   CallInfo *ci;
   StkId lim = L->top;
+  // 看来连第一个空ci也计算在内
   for (ci = L->ci; ci != NULL; ci = ci->previous) {
     lua_assert(ci->top <= L->stack_last);
     if (lim < ci->top) lim = ci->top;
@@ -275,7 +278,7 @@ static void callhook (lua_State *L, CallInfo *ci) {
 
 
 // 对于可变参数
-// 将所有参数移到原top之上
+// 将固定参数移到原top之上
 static StkId adjust_varargs (lua_State *L, Proto *p, int actual) {
   int i;
   int nfixargs = p->numparams;
@@ -367,6 +370,7 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
 
       // lua对缺少的参数设为nil
       // (嗯嗯..不像C)
+      // n是实际参数个数,有可能大于p->numparams
       n = cast_int(L->top - func) - 1;  /* number of real arguments */
       for (; n < p->numparams; n++)
         setnilvalue(L->top++);  /* complete missing arguments */
