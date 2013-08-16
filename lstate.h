@@ -72,6 +72,8 @@ typedef struct CallInfo {
   struct CallInfo *previous, *next;  /* dynamic call link */
   short nresults;  /* expected number of results from this function */
   lu_byte callstatus;
+  // func的偏移
+  // 用于在yield中恢复
   ptrdiff_t extra;
   union {
     struct {  /* only for Lua functions */

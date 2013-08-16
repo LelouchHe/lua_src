@@ -38,6 +38,7 @@ Closure *luaF_newLclosure (lua_State *L, int n) {
 
 UpVal *luaF_newupval (lua_State *L) {
   UpVal *uv = &luaC_newobj(L, LUA_TUPVAL, sizeof(UpVal), NULL, 0)->uv;
+  // 初始化都是closed的
   uv->v = &uv->u.value;
   setnilvalue(uv->v);
   return uv;

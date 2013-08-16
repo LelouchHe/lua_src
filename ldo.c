@@ -464,6 +464,7 @@ static void finishCcall (lua_State *L) {
   lua_assert(ci->u.c.status != LUA_OK);
   ci->callstatus = (ci->callstatus & ~(CIST_YPCALL | CIST_STAT)) | CIST_YIELDED;
   lua_unlock(L);
+// TODO: 这个调用做什么
   n = (*ci->u.c.k)(L);
   lua_lock(L);
   api_checknelems(L, n);
@@ -500,17 +501,22 @@ static CallInfo *findpcall (lua_State *L) {
 }
 
 
+// 这些信息都在lua_pcallk处设置
+// 如果不是从lua_pcallk处来,就返回0,无保护
 static int recover (lua_State *L, int status) {
   StkId oldtop;
   CallInfo *ci = findpcall(L);
+  // 找到pcallk处
   if (ci == NULL) return 0;  /* no recovery point */
   /* "finish" luaD_pcall */
   oldtop = restorestack(L, ci->extra);
   luaF_close(L, oldtop);
+  // 设置错误信息
   seterrorobj(L, status, oldtop);
   L->ci = ci;
   L->allowhook = ci->u.c.old_allowhook;
   L->nny = 0;  /* should be zero to be yieldable */
+  // 调整栈
   luaD_shrinkstack(L);
   L->errfunc = ci->u.c.old_errfunc;
   ci->callstatus |= CIST_STAT;  /* call has error status */
@@ -589,6 +595,7 @@ LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs) {
   else {  /* yield or regular error */
     while (status != LUA_OK && status != LUA_YIELD) {  /* error? */
       if (recover(L, status))  /* recover point? */
+        // 此时,L->ci就是lua_pcallk调用了
         status = luaD_rawrunprotected(L, unroll, NULL);  /* run continuation */
       else {  /* unrecoverable error */
         L->status = cast_byte(status);  /* mark thread as `dead' */
@@ -612,6 +619,7 @@ LUA_API int lua_yieldk (lua_State *L, int nresults, int ctx, lua_CFunction k) {
   luai_userstateyield(L, nresults);
   lua_lock(L);
   api_checknelems(L, nresults);
+  // nny>0: 不允许yield
   if (L->nny > 0) {
     if (L != G(L)->mainthread)
       luaG_runerror(L, "attempt to yield across metamethod/C-call boundary");
@@ -619,14 +627,20 @@ LUA_API int lua_yieldk (lua_State *L, int nresults, int ctx, lua_CFunction k) {
       luaG_runerror(L, "attempt to yield from outside a coroutine");
   }
   L->status = LUA_YIELD;
+  // extra是func的偏移
   ci->extra = savestack(L, ci->func);  /* save current 'func' */
+  // lua中不使用ctx和k
   if (isLua(ci)) {  /* inside a hook? */
     api_check(L, k == NULL, "hooks cannot continue after yielding");
   }
+  // C中throw出来
   else {
     if ((ci->u.c.k = k) != NULL)  /* is there a continuation? */
       ci->u.c.ctx = ctx;  /* save context */
     ci->func = L->top - nresults - 1;  /* protect stack below results */
+    // TODO: 这个throw去了哪里?
+    // 应该是lua_resume的status = luaD_rawrunprotected(L, resume, L->top - nargs);
+    // yield是在resume中返回
     luaD_throw(L, LUA_YIELD);
   }
   lua_assert(ci->callstatus & CIST_HOOKED);  /* must be inside a hook */
@@ -635,6 +649,9 @@ LUA_API int lua_yieldk (lua_State *L, int nresults, int ctx, lua_CFunction k) {
 }
 
 
+// 不提供ctx和k
+// 这是同lua_pcallk的区别
+// lua_pcallk对于无需yield的调用,使用这个
 int luaD_pcall (lua_State *L, Pfunc func, void *u,
                 ptrdiff_t old_top, ptrdiff_t ef) {
   int status;
@@ -697,6 +714,8 @@ static void f_parser (lua_State *L, void *ud) {
     cl = luaY_parser(L, p->z, &p->buff, &p->dyd, p->name, c);
   }
   // meaningless?
+  // 这个是动态分配的,初始分配1,当有需要时才扩展
+  // 这里用来保证是相符的
   lua_assert(cl->l.nupvalues == cl->l.p->sizeupvalues);
   for (i = 0; i < cl->l.nupvalues; i++) {  /* initialize upvalues */
     UpVal *up = luaF_newupval(L);
