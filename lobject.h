@@ -419,6 +419,7 @@ typedef union TString {
   L_Umaxalign dummy;  /* ensures maximum alignment for strings */
   struct {
     CommonHeader;
+    // >0: 暴露关键字; =0: 其他普通字符串
     lu_byte extra;  /* reserved words for short strings; "has hash" for longs */
     unsigned int hash;
     size_t len;  /* number of characters in string */

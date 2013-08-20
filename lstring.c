@@ -76,6 +76,7 @@ void luaS_resize (lua_State *L, int newsize) {
     tb->hash[i] = NULL;
     while (p) {  /* for each node in the list */
       GCObject *next = gch(p)->next;  /* save next */
+      // ts->hash是原始hash
       unsigned int h = lmod(gco2ts(p)->hash, newsize);  /* new position */
       gch(p)->next = tb->hash[h];  /* chain it */
       tb->hash[h] = p;
@@ -159,13 +160,14 @@ static TString *internshrstr (lua_State *L, const char *str, size_t l) {
 /*
 ** new string (with explicit length)
 */
+// 短字符串: 字符串开链hash表
+// 长字符串: allgc单链表
 TString *luaS_newlstr (lua_State *L, const char *str, size_t l) {
   if (l <= LUAI_MAXSHORTLEN)  /* short string? */
     return internshrstr(L, str, l);
   else {
     if (l + 1 > (MAX_SIZET - sizeof(TString))/sizeof(char))
       luaM_toobig(L);
-    // 插入G(L)->allgc链表
     return createstrobj(L, str, l, LUA_TLNGSTR, G(L)->seed, NULL);
   }
 }
