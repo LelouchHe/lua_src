@@ -19,8 +19,11 @@
 /*
 ** Extra tags for non-values
 */
+// lua函数的元信息
 #define LUA_TPROTO	LUA_NUMTAGS
+// upvalue
 #define LUA_TUPVAL	(LUA_NUMTAGS+1)
+// FIXME:
 #define LUA_TDEADKEY	(LUA_NUMTAGS+2)
 
 /*
@@ -36,6 +39,7 @@
 ** bit 6: whether value is collectable
 */
 
+// | 4: 类型 | 2: 额外信息(一般是子类型,见下) | 1: 是否可以GC |
 #define VARBITS		(3 << 4)
 
 
@@ -91,6 +95,7 @@ typedef struct GCheader {
 /*
 ** Union of all Lua values
 */
+// Value包含GC和非GC对象
 typedef union Value Value;
 
 
@@ -104,6 +109,7 @@ typedef union Value Value;
 */
 
 // 值,类型
+// FIXME: 这里是int,上面是lu_byte,有什么区别
 #define TValuefields	Value value_; int tt_
 
 typedef struct lua_TValue TValue;
@@ -116,6 +122,9 @@ typedef struct lua_TValue TValue;
 #define val_(o)		((o)->value_)
 #define num_(o)		(val_(o).n)
 
+// tag是完整的标识,main_type+var_type+gc
+// type是main_type+var_type
+// typenv是main_type
 
 /* raw type tag of a TValue */
 #define rttype(o)	((o)->tt_)
@@ -131,6 +140,7 @@ typedef struct lua_TValue TValue;
 
 
 /* Macros to test type */
+// GC: string, table, function(带有upvalue的closure), userdata, thread
 #define checktag(o,t)		(rttype(o) == (t))
 #define checktype(o,t)		(ttypenv(o) == (t))
 #define ttisnumber(o)		checktag((o), LUA_TNUMBER)
@@ -180,6 +190,8 @@ typedef struct lua_TValue TValue;
 /* Macros for internal tests */
 #define righttt(obj)		(ttype(obj) == gcvalue(obj)->gch.tt)
 
+// 非gc对象一直存活
+// gc对象要判断gc标识
 #define checkliveness(g,obj) \
 	lua_longassert(!iscollectable(obj) || \
 			(righttt(obj) && !isdead(g,gcvalue(obj))))
@@ -372,6 +384,9 @@ typedef struct lua_TValue TValue;
 #define checktype(o,t)	(ctb(tt_(o) | VARBITS) == ctb(tag2tt(t) | VARBITS))
 
 #undef ttisequal
+// 这里比较的是类型
+// 为什么单独拿出num来比较呢?又没有string/num的转换
+// 好吧,这里是NANTRICK,目前不用关心
 #define ttisequal(o1,o2)  \
 	(ttisnumber(o1) ? ttisnumber(o2) : (tt_(o1) == tt_(o2)))
 
@@ -398,10 +413,11 @@ union Value {
   void *p;         /* light userdata */
   int b;           /* booleans */
   lua_CFunction f; /* light C functions */
+  // NANTRICK下没有这项
   numfield         /* numbers */
 };
 
-
+// Value value_; int tt_;
 struct lua_TValue {
   TValuefields;
 };
@@ -415,6 +431,9 @@ typedef TValue *StkId;  /* index to stack elements */
 /*
 ** Header for string value; string bytes follow the end of this structure
 */
+// FIXME: 数据结构的对齐,怎么操作?
+// 利用编译器分配时,会对齐和填空,开头使用一个预期的align的对象,就使后面的都以这个对象对齐
+// 因为每个基本对象都有自己的对齐属性,开头对齐了,后面肯定就沿着这个地址来存放
 typedef union TString {
   L_Umaxalign dummy;  /* ensures maximum alignment for strings */
   struct {
@@ -449,12 +468,15 @@ typedef union Udata {
 
 
 
+// name也使用了TString,表明这些资源也是可以回收,而不是永远存活的
 /*
 ** Description of an upvalue for function prototypes
 */
+// 这里并没有upvalue的值,而是描述信息
 typedef struct Upvaldesc {
   TString *name;  /* upvalue name (for debug information) */
   lu_byte instack;  /* whether it is in stack */
+  // 偏移,而非指针,因为stack会realloc
   lu_byte idx;  /* index of upvalue (in stack or in outer function's list) */
 } Upvaldesc;
 
@@ -465,6 +487,7 @@ typedef struct Upvaldesc {
 */
 typedef struct LocVar {
   TString *varname;
+  // 作用域
   int startpc;  /* first point where variable is active */
   int endpc;    /* first point where variable is dead */
 } LocVar;
@@ -473,6 +496,9 @@ typedef struct LocVar {
 /*
 ** Function Prototypes
 */
+// 这个也只是描述信息而已
+// Proto也是可GC的
+// FIXME: 这个就不需要align?
 typedef struct Proto {
   CommonHeader;
   TValue *k;  /* constants used by the function */
@@ -494,11 +520,12 @@ typedef struct Proto {
   int sizelocvars;
   int linedefined;
   int lastlinedefined;
+  // FIXME: gclist是做什么的?
   GCObject *gclist;
   // see?? 这个是固定参数个数
   // 真实参数个数需要从实际调用中来看
   lu_byte numparams;  /* number of fixed parameters */
-  lu_byte is_vararg;
+  lu_byte is_vararg; // 从定义就能看到函数参数是否可变
   lu_byte maxstacksize;  /* maximum stack used by this function */
 } Proto;
 
@@ -507,6 +534,7 @@ typedef struct Proto {
 /*
 ** Lua Upvalues
 */
+// 有open/closed之分,好像是luaF_xx系列操作的
 typedef struct UpVal {
   CommonHeader;
   TValue *v;  /* points to stack or to its own value */
@@ -530,19 +558,19 @@ typedef struct UpVal {
 typedef struct CClosure {
   ClosureHeader;
   lua_CFunction f;
-  // c.upv是value实体
+  // c.upvalue是value实体
   TValue upvalue[1];  /* list of upvalues */
 } CClosure;
 
 
 typedef struct LClosure {
   ClosureHeader;
-  struct Proto *p;
-  // l.upv只是指针
+  struct Proto *p; //描述
+  // l.upvalue只是指针
   UpVal *upvals[1];  /* list of upvalues */
 } LClosure;
 
-
+// 二者保存的upvalue方式不同
 typedef union Closure {
   CClosure c;
   LClosure l;

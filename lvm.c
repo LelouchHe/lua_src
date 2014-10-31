@@ -522,6 +522,7 @@ void luaV_finishOp (lua_State *L) {
 
 
 /* execute a jump instruction */
+// base是第一个参数位置,但lua中下标从1开始,所以需要-1
 #define dojump(ci,i,e) \
   { int a = GETARG_A(i); \
     if (a > 0) luaF_close(L, ci->u.l.base + a - 1); \
@@ -556,6 +557,7 @@ void luaV_finishOp (lua_State *L) {
 #define vmcase(l,b)	case l: {b}  break;
 #define vmcasenb(l,b)	case l: {b}		/* nb = no break */
 
+// 配合lopcodes看指令格式
 void luaV_execute (lua_State *L) {
   CallInfo *ci = L->ci;
   LClosure *cl;
@@ -571,6 +573,7 @@ void luaV_execute (lua_State *L) {
   /* main loop of interpreter */
   for (;;) {
     // savedpc类似与pc,记录当前指令位置
+	// 会在jmp系列中进行变更
     Instruction i = *(ci->u.l.savedpc++);
     StkId ra;
     // debug hook
@@ -584,6 +587,7 @@ void luaV_execute (lua_State *L) {
     lua_assert(base == ci->u.l.base);
     lua_assert(base <= L->top && L->top < L->stack + L->stacksize);
     vmdispatch (GET_OPCODE(i)) {
+	  // 以下是get/set操作
       vmcase(OP_MOVE,
         setobjs2s(L, ra, RB(i));
       )
@@ -645,6 +649,8 @@ void luaV_execute (lua_State *L) {
         setobjs2s(L, ra+1, rb);
         Protect(luaV_gettable(L, rb, RKC(i), ra));
       )
+	  
+	  // 以下是操作符操作
       vmcase(OP_ADD,
         arith_op(luai_numadd, TM_ADD);
       )
@@ -685,6 +691,7 @@ void luaV_execute (lua_State *L) {
         int b = GETARG_B(i);
         int c = GETARG_C(i);
         StkId rb;
+		// 调整top,然后利用luaV_concat即可(参数主要从top取)
         L->top = base + c + 1;  /* mark the end of concat operands */
         Protect(luaV_concat(L, c - b + 1));
         ra = RA(i);  /* 'luav_concat' may invoke TMs and move the stack */
@@ -724,6 +731,7 @@ void luaV_execute (lua_State *L) {
         )
       )
       vmcase(OP_TEST,
+	    // A C同bool值时,为true
         if (GETARG_C(i) ? l_isfalse(ra) : !l_isfalse(ra))
             ci->u.l.savedpc++;
           else
@@ -754,6 +762,7 @@ void luaV_execute (lua_State *L) {
           // if (!luaD_precall(L, func, nresults))
           //    luaV_execute(L)
           // 但此处本身处于这里,所以称CIST_REENTRY
+		  // 此处ci和stack的构建,在luaD_precall中准备好了
           ci = L->ci;
           ci->callstatus |= CIST_REENTRY;
           goto newframe;  /* restart luaV_execute over new Lua function */
@@ -768,6 +777,7 @@ void luaV_execute (lua_State *L) {
         if (luaD_precall(L, ra, LUA_MULTRET))  /* C function? */
           base = ci->u.l.base;
         else {
+		  // 同上,precall已经把ci和stack准备好了
           /* tail call: put called frame (n) in place of caller one (o) */
           CallInfo *nci = L->ci;  /* called frame */
           CallInfo *oci = nci->previous;  /* caller frame */
@@ -777,8 +787,11 @@ void luaV_execute (lua_State *L) {
           StkId lim = nci->u.l.base + getproto(nfunc)->numparams;
           int aux;
           /* close all upvalues from previous call */
+		  // 处理原来的cl
+		  // cl是当前的closure,同oci指向同一个lua function
           if (cl->p->sizep > 0) luaF_close(L, oci->u.l.base);
           /* move new frame into old one */
+		  // 搬迁stack,func+params
           for (aux = 0; nfunc + aux < lim; aux++)
             setobjs2s(L, ofunc + aux, nfunc + aux);
           oci->u.l.base = ofunc + (nci->u.l.base - nfunc);  /* correct base */
@@ -795,12 +808,18 @@ void luaV_execute (lua_State *L) {
         if (b != 0) L->top = ra+b-1;
         if (cl->p->sizep > 0) luaF_close(L, base);
         b = luaD_poscall(L, ra);
+		// CIST_REENTRY不主动清零,而是连带ci一起被删除(GC),所以没有清零代码
         if (!(ci->callstatus & CIST_REENTRY))  /* 'ci' still the called one */
+	      // 非重入,就要退出
+		  // 因为重入的话,return还是回到luaV_execute
           return;  /* external invocation: return */
         else {  /* invocation via reentry: continue execution */
+		  // 回复之前的状态
           ci = L->ci;
           if (b) L->top = ci->top;
           lua_assert(isLua(ci));
+		  // 重入,表示上一个指令肯定是CALL
+		  // 注意,这个ci已经恢复为原来的状态了(在luaD_poscall中清楚了调用ci,回到了previous)
           lua_assert(GET_OPCODE(*((ci)->u.l.savedpc - 1)) == OP_CALL);
           goto newframe;  /* restart luaV_execute over new Lua function */
         }
@@ -834,6 +853,8 @@ void luaV_execute (lua_State *L) {
         ci->u.l.savedpc += GETARG_sBx(i);
       )
       vmcasenb(OP_TFORCALL,
+		// ra是iter, ra+1是state, ra+2是idx
+		// 但为什么要移动呢?
         StkId cb = ra + 3;  /* call base */
         setobjs2s(L, cb+2, ra+2);
         setobjs2s(L, cb+1, ra+1);
@@ -841,6 +862,8 @@ void luaV_execute (lua_State *L) {
         L->top = cb + 3;  /* func. + 2 args (state and index) */
         Protect(luaD_call(L, cb, GETARG_C(i), 1));
         L->top = ci->top;
+
+		// 马上会进入TFORLOOP指令
         i = *(ci->u.l.savedpc++);  /* go to next instruction */
         ra = RA(i);
         lua_assert(GET_OPCODE(i) == OP_TFORLOOP);
@@ -877,6 +900,7 @@ void luaV_execute (lua_State *L) {
       )
       // Bx是内部定义闭包的index
       vmcase(OP_CLOSURE,
+	    // cl->p->p表示的是定义在cl内部的function
         Proto *p = cl->p->p[GETARG_Bx(i)];
         Closure *ncl = getcached(p, cl->upvals, base);  /* cached closure */
         // 内部定义闭包,使用当前闭包内的可见upv(cl->upvals)
@@ -894,6 +918,8 @@ void luaV_execute (lua_State *L) {
         // | func | nil | nil | ...(old fixed) | vararg1 | argarg2 | ... | fixed1(base) | fixed2 | ... | fixedn | top |
         // 具体搬迁过程见luaD_precall
         // n此时为可变参数个数
+		// base - ci->func - 1 = 实际传递的参数
+		// cl->p->numparams = 固定参数
         int n = cast_int(base - ci->func) - cl->p->numparams - 1;
         if (b < 0) {  /* B == 0? */
           b = n;  /* get all var. arguments */

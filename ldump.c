@@ -73,6 +73,7 @@ static void DumpString(const TString* s, DumpState* D)
  }
 }
 
+// 其实每个f(Proto)就包含了字节码,可以看作32bit的vector
 #define DumpCode(f,D)	 DumpVector(f->code,f->sizecode,sizeof(Instruction),D)
 
 static void DumpFunction(const Proto* f, DumpState* D);

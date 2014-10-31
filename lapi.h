@@ -17,6 +17,8 @@
 #define adjustresults(L,nres) \
     { if ((nres) == LUA_MULTRET && L->ci->top < L->top) L->ci->top = L->top; }
 
+// 从这里可以想象stack的情况
+// | L->ci->func | 1 | 2 | ... | n | L->top | ... | L->ci->top |
 #define api_checknelems(L,n)	api_check(L, (n) < (L->top - L->ci->func), \
 				  "not enough elements in the stack")
 

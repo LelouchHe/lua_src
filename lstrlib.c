@@ -63,7 +63,7 @@ static int str_sub (lua_State *L) {
   return 1;
 }
 
-
+// 不能直接修改原字符串
 static int str_reverse (lua_State *L) {
   size_t l, i;
   luaL_Buffer b;
@@ -129,7 +129,7 @@ static int str_rep (lua_State *L) {
   return 1;
 }
 
-
+// 使用posrelat计算得到统一的值,在处理问题上果然方便
 static int str_byte (lua_State *L) {
   size_t l;
   const char *s = luaL_checklstring(L, 1, &l);

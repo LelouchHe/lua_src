@@ -53,8 +53,10 @@ const char lua_ident[] =
 
 // 从idx索引取得对应的值
 // stack 构造
-// func(0) | 1(-n) | 2(-(n-1)) | ... | n(-1) | top
 // top指向栈顶之上的位置
+// func(0) | 1(-n) | 2(-(n-1)) | ... | n(-1) | top
+// LUA_REGISTRYINDEX: 很大的负值(大于最大stack),全局idx
+// 比这更小的,就是upvalue,二者的偏差是upvalue的offset
 static TValue *index2addr (lua_State *L, int idx) {
   CallInfo *ci = L->ci;
   // idx > 0: 从当前栈(func)栈底开始
@@ -90,12 +92,14 @@ static TValue *index2addr (lua_State *L, int idx) {
 ** to be called by 'lua_checkstack' in protected mode, to grow stack
 ** capturing memory errors
 */
+// FIXME: 参数为何是void *
+// growstack是间接调用(luaD_rawrunprotected)..参数限制为void *
 static void growstack (lua_State *L, void *ud) {
   int size = *(int *)ud;
   luaD_growstack(L, size);
 }
 
-
+// size是额外请求的stack项数量
 LUA_API int lua_checkstack (lua_State *L, int size) {
   int res;
   CallInfo *ci = L->ci;
@@ -158,18 +162,25 @@ LUA_API const lua_Number *lua_version (lua_State *L) {
 ** convert an acceptable stack index into an absolute index
 */
 // 不同于index2addr, 这个只变换idx
+// 重温:
+// > 0: 正常栈
+// <= LUA_REGISTRYINDEX: 全局表和upvalue(属于特殊index,没必要转换)
+// otherwise: 栈的逆值
 LUA_API int lua_absindex (lua_State *L, int idx) {
   return (idx > 0 || idx <= LUA_REGISTRYINDEX)
          ? idx
          : cast_int(L->top - L->ci->func + idx);
 }
 
-
+// top在栈顶之上,指向的是空槽
 LUA_API int lua_gettop (lua_State *L) {
   return cast_int(L->top - (L->ci->func + 1));
 }
 
-
+// 可以扩张和缩小
+// idx > 0: 表示栈最后的元素数
+// idx < 0: 类似,只是以逆表示
+// 正/负转换要注意
 LUA_API void lua_settop (lua_State *L, int idx) {
   StkId func = L->ci->func;
   lua_lock(L);
@@ -248,6 +259,7 @@ LUA_API void lua_copy (lua_State *L, int fromidx, int toidx) {
 
 // 将idx复制到top处
 // 数量加1
+// 可以看到,除了settop等有check的外,其余L->top++都使用api_incr_top
 LUA_API void lua_pushvalue (lua_State *L, int idx) {
   lua_lock(L);
   setobj2s(L, L->top, index2addr(L, idx));
@@ -261,7 +273,8 @@ LUA_API void lua_pushvalue (lua_State *L, int idx) {
 ** access functions (stack -> C)
 */
 
-
+// LUA_TNONE不作为o的一部分,可以节约空间
+// nil对象只有一份也是同理
 LUA_API int lua_type (lua_State *L, int idx) {
   StkId o = index2addr(L, idx);
   return (isvalid(o) ? ttypenv(o) : LUA_TNONE);
@@ -279,7 +292,8 @@ LUA_API int lua_iscfunction (lua_State *L, int idx) {
   return (ttislcf(o) || (ttisCclosure(o)));
 }
 
-
+// 个人感觉num/string的转换很不好
+// 不如提供接口,而在语言层面上禁止自动转换
 // string/num => true
 LUA_API int lua_isnumber (lua_State *L, int idx) {
   TValue n;
@@ -332,11 +346,13 @@ LUA_API void  lua_arith (lua_State *L, int op) {
   else {
     luaV_arith(L, o1, o1, o2, cast(TMS, op - LUA_OPADD + TM_ADD));
   }
+
+  // 有一个结果存在,故只-1
   L->top--;
   lua_unlock(L);
 }
 
-
+// 可能涉及到meta的比较
 LUA_API int lua_compare (lua_State *L, int index1, int index2, int op) {
   StkId o1, o2;
   int i = 0;
@@ -355,8 +371,9 @@ LUA_API int lua_compare (lua_State *L, int index1, int index2, int op) {
   return i;
 }
 
-
+// x就表示有一个isnum的额外参数
 // isnum就是表示是否转换成功的标志(感觉好多余啊)
+// string的数字也会进行转换
 LUA_API lua_Number lua_tonumberx (lua_State *L, int idx, int *isnum) {
   TValue n;
   const TValue *o = index2addr(L, idx);
@@ -475,7 +492,8 @@ LUA_API lua_State *lua_tothread (lua_State *L, int idx) {
   return (!ttisthread(o)) ? NULL : thvalue(o);
 }
 
-
+// 这是lua内采用引用/指针传值的几个类型:
+// table,function,userdata,thread
 LUA_API const void *lua_topointer (lua_State *L, int idx) {
   StkId o = index2addr(L, idx);
   switch (ttype(o)) {
@@ -493,6 +511,8 @@ LUA_API const void *lua_topointer (lua_State *L, int idx) {
 
 // 可见,除了tostring/tonumber真正改变idx的值之外
 // 其他都是取值而不改变
+// tostring/tonumber体现了string/number的互通
+// 不过这也仅在操作中,在相等判断时,不做转型
 
 
 /*
@@ -517,7 +537,8 @@ LUA_API void lua_pushnumber (lua_State *L, lua_Number n) {
   lua_unlock(L);
 }
 
-
+// 可以看到,lua内部是不区分符号和类型的
+// 这两个接口应该主要是为了方便使用
 LUA_API void lua_pushinteger (lua_State *L, lua_Integer n) {
   lua_lock(L);
   setnvalue(L->top, cast_num(n));
@@ -535,7 +556,8 @@ LUA_API void lua_pushunsigned (lua_State *L, lua_Unsigned u) {
   lua_unlock(L);
 }
 
-
+// 内部会进行复制,并返回内部表示
+// 所以参数可以外部处理,但返回不能
 LUA_API const char *lua_pushlstring (lua_State *L, const char *s, size_t len) {
   TString *ts;
   lua_lock(L);
@@ -589,7 +611,8 @@ LUA_API const char *lua_pushfstring (lua_State *L, const char *fmt, ...) {
   return ret;
 }
 
-
+// upvalue的顺序也是正常入栈的
+// 最后upvalue全出栈,closure入栈置顶
 LUA_API void lua_pushcclosure (lua_State *L, lua_CFunction fn, int n) {
   lua_lock(L);
   if (n == 0) {
@@ -603,7 +626,9 @@ LUA_API void lua_pushcclosure (lua_State *L, lua_CFunction fn, int n) {
     cl = luaF_newCclosure(L, n);
     cl->c.f = fn;
 
-    //类似弹出n个参数
+    // 类似弹出n个参数
+	// upvalue的顺序和push到stack的顺序是一样的
+	// 不知道为什么不能更直接些,要避免这个情况
     L->top -= n;
     while (n--)
       setobj2n(L, &cl->c.upvalue[n], L->top + n);
@@ -613,7 +638,7 @@ LUA_API void lua_pushcclosure (lua_State *L, lua_CFunction fn, int n) {
   lua_unlock(L);
 }
 
-
+// b != 0在输入时就简化之后的判断
 LUA_API void lua_pushboolean (lua_State *L, int b) {
   lua_lock(L);
   setbvalue(L->top, (b != 0));  /* ensure that true is 1 */
@@ -632,7 +657,7 @@ LUA_API void lua_pushlightuserdata (lua_State *L, void *p) {
 
 // 还可以把别的L推进来么?
 // 可能是G是全局的,不同coroutine都能取到,但不是每个coroutine都是mainthread
-// TODO
+// G是全局共享的
 LUA_API int lua_pushthread (lua_State *L) {
   lua_lock(L);
   setthvalue(L, L->top, L);
@@ -649,6 +674,11 @@ LUA_API int lua_pushthread (lua_State *L) {
 
 
 // push _G[var]
+// 感觉这个和idx=LUA_REGISTRYINDEX的取table值相同
+// 有些许不同:
+// LUA_REGISTRYINDEX: 全局表,除了全局变量之外还有很多
+// LUA_RIDX_GLOBALS: 只是全局表中的全局变量表而已
+// 而且使用的接口也不一样
 LUA_API void lua_getglobal (lua_State *L, const char *var) {
   Table *reg = hvalue(&G(L)->l_registry);
   const TValue *gt;  /* global table */
@@ -660,6 +690,7 @@ LUA_API void lua_getglobal (lua_State *L, const char *var) {
 }
 
 
+// 名字可能不好,应该是lua_tableget,即从idx指的table取值
 // top-1 = idx[top-1]
 LUA_API void lua_gettable (lua_State *L, int idx) {
   StkId t;
@@ -670,6 +701,8 @@ LUA_API void lua_gettable (lua_State *L, int idx) {
   lua_unlock(L);
 }
 
+// 带field/i的操作,都是为更方便使用准备的,即key不用入栈,直接作为参数(很像php中的idx/string表)
+// 带raw的,一般是纯table操作,不涉及meta调用
 
 // push idx[k]
 LUA_API void lua_getfield (lua_State *L, int idx, const char *k) {
@@ -683,7 +716,9 @@ LUA_API void lua_getfield (lua_State *L, int idx, const char *k) {
   lua_unlock(L);
 }
 
-
+// 同lua_gettable的区别,可以从调用上看
+// luaV_gettable一看前缀就知道设计vm操作,即meta方法的调用
+// luaH_get就只是table的操作(H for hashtable)
 // top-1 = idx[top-1]
 LUA_API void lua_rawget (lua_State *L, int idx) {
   StkId t;
@@ -744,6 +779,9 @@ LUA_API int lua_getmetatable (lua_State *L, int objindex) {
   int res;
   lua_lock(L);
   obj = index2addr(L, objindex);
+
+  // table/userdata可以有自己的meta
+  // 其他类型是统一的(在G(L)->mt中)
   switch (ttypenv(obj)) {
     case LUA_TTABLE:
       mt = hvalue(obj)->metatable;
@@ -768,7 +806,7 @@ LUA_API int lua_getmetatable (lua_State *L, int objindex) {
 
 
 // push idx->env or nil
-// uservalue本来就是userdata.env
+// uservalue本来就是userdata.env(实际是一个table)
 LUA_API void lua_getuservalue (lua_State *L, int idx) {
   StkId o;
   lua_lock(L);
@@ -799,11 +837,13 @@ LUA_API void lua_setglobal (lua_State *L, const char *var) {
   gt = luaH_getint(reg, LUA_RIDX_GLOBALS);
   setsvalue2s(L, L->top++, luaS_new(L, var));
   luaV_settable(L, gt, L->top - 1, L->top - 2);
+  // 前面把var转为string入栈,所以此处pop2次
   L->top -= 2;  /* pop value and key */
   lua_unlock(L);
 }
 
 
+// 先key,后value
 // idx[top-2] = top-1
 // pop 2
 LUA_API void lua_settable (lua_State *L, int idx) {
@@ -842,8 +882,11 @@ LUA_API void lua_rawset (lua_State *L, int idx) {
   t = index2addr(L, idx);
   api_check(L, ttistable(t), "table expected");
   setobj2t(L, luaH_set(L, hvalue(t), L->top-2), L->top-1);
+
+  // FIXME: 这两句什么意思?
   invalidateTMcache(hvalue(t));
   luaC_barrierback(L, gcvalue(t), L->top-1);
+
   L->top -= 2;
   lua_unlock(L);
 }
@@ -901,6 +944,8 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
       hvalue(obj)->metatable = mt;
       if (mt)
         luaC_objbarrierback(L, gcvalue(obj), mt);
+
+		// 还记得__gc的finalizer么?在setmetatable时才会检查,之后修改meta不会做处理
         luaC_checkfinalizer(L, gcvalue(obj), mt);
       break;
     }
@@ -913,7 +958,8 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
       break;
     }
     // 非table/userdata的mt
-    // 不能再lua中设置,而且是一个类型共用一个mt
+    // 不能在lua中设置,而且是一个类型共用一个mt
+	// 看来在C中一改,就全都改了
     default: {
       G(L)->mt[ttypenv(obj)] = mt;
       break;
@@ -928,6 +974,7 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
 // idx.env = top-1
 // pop 1
 // uservalue本来就是userdata.env
+// lua内userdata分 管理部分(头)和用户数据(env)
 LUA_API void lua_setuservalue (lua_State *L, int idx) {
   StkId o;
   lua_lock(L);
@@ -951,7 +998,9 @@ LUA_API void lua_setuservalue (lua_State *L, int idx) {
 ** `load' and `call' functions (run Lua code)
 */
 
-
+// 主要是保证stack的空间是足够的
+// 栈的空位就是L->top到L->ci->top之间(当然还可以grow到L->stack_last)
+// LUA_MULTRET就需要被调用方自行grow,否则,就是调用方预留
 #define checkresults(L,na,nr) \
      api_check(L, (nr) == LUA_MULTRET || (L->ci->top - L->top >= (nr) - (na)), \
 	"results from function overflow current stack size")
@@ -959,6 +1008,7 @@ LUA_API void lua_setuservalue (lua_State *L, int idx) {
 
 // YIELDED: 设置ctx,返回状态
 // others : OK
+// context和continue函数是C完成yield/resume的方式
 LUA_API int lua_getctx (lua_State *L, int *ctx) {
   if (L->ci->callstatus & CIST_YIELDED) {
     if (ctx) *ctx = L->ci->u.c.ctx;
@@ -968,7 +1018,9 @@ LUA_API int lua_getctx (lua_State *L, int *ctx) {
 }
 
 
-//TODO: ctx/k分别是什么含义
+// ctx: 表示调用者传给continue函数的ctx.应该可以是任意值,二者协商一致即可(比如是G的一个key)
+// k: 函数yield之后,再次resume时执行的函数.coroutine应该是longjmp,这样原调用stack就全没了,所以只能另开调用栈
+//    当然可以是自己本身
 LUA_API void lua_callk (lua_State *L, int nargs, int nresults, int ctx,
                         lua_CFunction k) {
   StkId func;
@@ -979,6 +1031,8 @@ LUA_API void lua_callk (lua_State *L, int nargs, int nresults, int ctx,
   api_check(L, L->status == LUA_OK, "cannot do calls on non-normal thread");
   checkresults(L, nargs, nresults);
   func = L->top - (nargs+1);
+  // FIXME: L->nny是哪里设置的?
+  // luaD_call里设置(通过最后一个allowyield参数),表示当前的调用链是否允许yield,会累加,一个不行,之后都不行
   if (k != NULL && L->nny == 0) {  /* need to prepare continuation? */
     L->ci->u.c.k = k;  /* save continuation */
     L->ci->u.c.ctx = ctx;  /* save context */
@@ -1004,6 +1058,8 @@ struct CallS {  /* data to `f_call' */
 
 static void f_call (lua_State *L, void *ud) {
   struct CallS *c = cast(struct CallS *, ud);
+
+  // 像这里的call就被lua_pcallk保护在luaD_rawrunproteced中
   luaD_call(L, c->func, c->nresults, 0);
 }
 
@@ -1011,6 +1067,7 @@ static void f_call (lua_State *L, void *ud) {
 // pcall下所有的异常都会longjmp到pcall内部
 // 所以可以捕获
 // pcallk -> luaD_pcall -> luaD_rawrunprotected(setjmp)
+// errfunc: 错误处理函数的下标
 LUA_API int lua_pcallk (lua_State *L, int nargs, int nresults, int errfunc,
                         int ctx, lua_CFunction k) {
   struct CallS c;
@@ -1027,11 +1084,14 @@ LUA_API int lua_pcallk (lua_State *L, int nargs, int nresults, int errfunc,
   else {
     StkId o = index2addr(L, errfunc);
     api_checkvalidindex(L, o);
+
+	// func是errfunc的stack偏移(相对于整个L->stack而言)
     func = savestack(L, o);
   }
   c.func = L->top - (nargs+1);  /* function to be called */
   if (k == NULL || L->nny > 0) {  /* no continuation or no yieldable? */
     c.nresults = nresults;  /* do a 'conventional' protected call */
+	// 此时没有上层的resume提供保护,所以只能此处自己提供
     status = luaD_pcall(L, f_call, &c, savestack(L, c.func), func);
   }
   else {  /* prepare continuation (call is already protected by 'resume') */
@@ -1045,6 +1105,9 @@ LUA_API int lua_pcallk (lua_State *L, int nargs, int nresults, int errfunc,
     L->errfunc = func;
     /* mark that function may do error recovery */
     ci->callstatus |= CIST_YPCALL;
+
+	// luaD_call是不保护现场的,所以有错误时,不一定能从luaD_call返回
+	// 保护机制有调用方利用resume提供,此处只保存调用信息,不提供保护
     luaD_call(L, c.func, nresults, 1);  /* do the call */
     ci->callstatus &= ~CIST_YPCALL;
     L->errfunc = ci->u.c.old_errfunc;
@@ -1069,6 +1132,10 @@ LUA_API int lua_load (lua_State *L, lua_Reader reader, void *data,
   if (status == LUA_OK) {  /* no errors? */
     LClosure *f = clLvalue(L->top - 1);  /* get newly created function */
     // _ENV怎么办?这里直接就是全局_G
+	// trunk生成的function->upvals[0]应该就是代表着_ENV,初始值是_G
+	// 调用parser之后,function的upvals已经构建好,此处只是填值而已
+	// 也可以看到,trunk使用全局变量,会变换为引用upvals[0]的table
+	// FIXME: 还可以不使用么?
     if (f->nupvalues == 1) {  /* does it have one upvalue? */
       /* get global table from registry */
       Table *reg = hvalue(&G(L)->l_registry);
@@ -1085,6 +1152,8 @@ LUA_API int lua_load (lua_State *L, lua_Reader reader, void *data,
 
 // 类似load,并没有指明dump的去向(这个是writer关心的)
 // data仍然是writer使用的参数
+// 可以想象成输出编译之后的字节码+元信息
+// 在内存中,可以保留各种信息,这些在最后dump到二进制,再load回来时,要完整保留
 LUA_API int lua_dump (lua_State *L, lua_Writer writer, void *data) {
   int status;
   TValue *o;
@@ -1193,6 +1262,7 @@ LUA_API int lua_gc (lua_State *L, int what, int data) {
 */
 
 
+// 除去lua_yieldk之外,会进行longjmp的唯一接口
 // msg入栈,longjmp/abort
 LUA_API int lua_error (lua_State *L) {
   lua_lock(L);
@@ -1272,6 +1342,8 @@ LUA_API void lua_setallocf (lua_State *L, lua_Alloc f, void *ud) {
 
 
 // push userdata
+// 实际分配 head + udata(size大小)
+// 返回的是udata指针
 LUA_API void *lua_newuserdata (lua_State *L, size_t size) {
   Udata *u;
   lua_lock(L);
@@ -1284,7 +1356,7 @@ LUA_API void *lua_newuserdata (lua_State *L, size_t size) {
 }
 
 
-
+// 返回name or NULL
 static const char *aux_upvalue (StkId fi, int n, TValue **val,
                                 GCObject **owner) {
   switch (ttype(fi)) {
@@ -1311,6 +1383,7 @@ static const char *aux_upvalue (StkId fi, int n, TValue **val,
 
 
 // top = funcindex.upv[n]
+// n从1开始
 LUA_API const char *lua_getupvalue (lua_State *L, int funcindex, int n) {
   const char *name;
   TValue *val = NULL;  /* to avoid warnings */

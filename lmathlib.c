@@ -28,7 +28,8 @@
 #define RADIANS_PER_DEGREE (PI/180.0)
 
 
-
+// 只push,但没有pop
+// 看来调用不需要清理stack
 static int math_abs (lua_State *L) {
   lua_pushnumber(L, l_tg(fabs)(luaL_checknumber(L, 1)));
   return 1;

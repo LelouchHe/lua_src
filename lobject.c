@@ -51,7 +51,8 @@ int luaO_fb2int (int x) {
   else return ((x & 7) + 8) << (e - 1);
 }
 
-
+// 快速取log2
+// 应该是Table的hash要用到
 int luaO_ceillog2 (unsigned int x) {
   static const lu_byte log_2[256] = {
     0,1,2,2,3,3,3,3,4,4,4,4,4,4,4,4,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,
@@ -69,7 +70,7 @@ int luaO_ceillog2 (unsigned int x) {
   return l + log_2[x];
 }
 
-
+// 算数运算
 lua_Number luaO_arith (int op, lua_Number v1, lua_Number v2) {
   switch (op) {
     case LUA_OPADD: return luai_numadd(NULL, v1, v2);
@@ -94,14 +95,15 @@ int luaO_hexavalue (int c) {
 
 #include <math.h>
 
-
+// 判断符号,并丢弃符号
 static int isneg (const char **s) {
   if (**s == '-') { (*s)++; return 1; }
   else if (**s == '+') (*s)++;
   return 0;
 }
 
-
+// 16 -> 10
+// 没有考虑溢出等,因为lua_Number一般是double
 static lua_Number readhexa (const char **s, lua_Number r, int *count) {
   for (; lisxdigit(cast_uchar(**s)); (*s)++) {  /* read integer part */
     r = (r * 16.0) + cast_num(luaO_hexavalue(cast_uchar(**s)));
@@ -115,6 +117,7 @@ static lua_Number readhexa (const char **s, lua_Number r, int *count) {
 ** convert an hexadecimal numeric string to a number, following
 ** C99 specification for 'strtod'
 */
+// 没有考虑边界情况,不过一般对于double,不需要考虑
 static lua_Number lua_strx2number (const char *s, char **endptr) {
   lua_Number r = 0.0;
   int e = 0, i = 0;
@@ -132,6 +135,7 @@ static lua_Number lua_strx2number (const char *s, char **endptr) {
   }
   if (i == 0 && e == 0)
     return 0.0;  /* invalid format (no digit) */
+  // 因为是16进制
   e *= -4;  /* each fractional digit divides value by 2^-4 */
   *endptr = cast(char *, s);  /* valid up to here */
   if (*s == 'p' || *s == 'P') {  /* exponent part? */
@@ -154,7 +158,7 @@ static lua_Number lua_strx2number (const char *s, char **endptr) {
 
 #endif
 
-
+// 不直接使用libc的原因是?
 int luaO_str2d (const char *s, size_t len, lua_Number *result) {
   char *endptr;
   if (strpbrk(s, "nN"))  /* reject 'inf' and 'nan' */
@@ -183,6 +187,7 @@ const char *luaO_pushvfstring (lua_State *L, const char *fmt, va_list argp) {
   for (;;) {
     const char *e = strchr(fmt, '%');
     if (e == NULL) break;
+	// %之前的字符串入栈
     setsvalue2s(L, L->top, luaS_newlstr(L, fmt, e-fmt));
     incr_top(L);
     switch (*(e+1)) {
@@ -256,6 +261,9 @@ const char *luaO_pushfstring (lua_State *L, const char *fmt, ...) {
 
 #define addstr(a,b,l)	( memcpy(a,b,(l) * sizeof(char)), a += (l) )
 
+// '=xxx' => xxx
+// '@xxx' => ...xxx | xxx
+// 'xxx'  => [string "xxx..."]
 void luaO_chunkid (char *out, const char *source, size_t bufflen) {
   size_t l = strlen(source);
   // '='后直接跟着源码
@@ -275,7 +283,7 @@ void luaO_chunkid (char *out, const char *source, size_t bufflen) {
     else {  /* add '...' before rest of name */
       addstr(out, RETS, LL(RETS));
       bufflen -= LL(RETS);
-      // TODO: 这是什么节奏
+      // 由于长度不够,只输出source最后的字符串
       memcpy(out, source + 1 + l - bufflen, bufflen * sizeof(char));
     }
   }

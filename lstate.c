@@ -68,13 +68,14 @@ typedef struct LX {
 ** Main thread combines a thread state and the global state
 */
 // 这意味着主线程会创建主线程的lua_State和golbal_State
+// 可以理解,main_thread和全局共享信息绑定
 typedef struct LG {
   LX l;
   global_State g;
 } LG;
 
 
-
+// 从lua_State*转型为LX*
 #define fromstate(L)	(cast(LX *, cast(lu_byte *, (L)) - offsetof(LX, l)))
 
 
@@ -104,6 +105,7 @@ static unsigned int makeseed (lua_State *L) {
 ** set GCdebt to a new value keeping the value (totalbytes + GCdebt)
 ** invariant
 */
+// g->totalbytes + g->GCdebt是恒量
 void luaE_setdebt (global_State *g, l_mem debt) {
   g->totalbytes -= (debt - g->GCdebt);
   g->GCdebt = debt;
@@ -123,6 +125,7 @@ CallInfo *luaE_extendCI (lua_State *L) {
 
 
 // 将L->ci全部释放
+// 但保留第一个ci
 void luaE_freeCI (lua_State *L) {
   CallInfo *ci = L->ci;
   CallInfo *next = ci->next;
@@ -133,7 +136,7 @@ void luaE_freeCI (lua_State *L) {
   }
 }
 
-
+// L1是newthread出来的
 static void stack_init (lua_State *L1, lua_State *L) {
   int i; CallInfo *ci;
   /* initialize stack array */
@@ -170,17 +173,22 @@ static void freestack (lua_State *L) {
 /*
 ** Create registry table and its predefined values
 */
+// 全局表+main_thread/globals_table
 static void init_registry (lua_State *L, global_State *g) {
+  // 能取个别的名字么?我还以为是metatable
   TValue mt;
   /* create registry */
+  // 全局表
   Table *registry = luaH_new(L);
   sethvalue(L, &g->l_registry, registry);
   // 大小为LUA_RIDX_LAST(2)的数组,0hash
   luaH_resize(L, registry, LUA_RIDX_LAST, 0);
   /* registry[LUA_RIDX_MAINTHREAD] = L */
+  // mt = L,registry[LUA_RIDX_MAINTHREAD]=mt
   setthvalue(L, &mt, L);
   luaH_setint(L, registry, LUA_RIDX_MAINTHREAD, &mt);
   /* registry[LUA_RIDX_GLOBALS] = table of globals */
+  // mt = {}, registry[LUA_RIDX_MAINTHREAD]=mt
   sethvalue(L, &mt, luaH_new(L));
   // global表没有值
   luaH_setint(L, registry, LUA_RIDX_GLOBALS, &mt);
@@ -195,11 +203,17 @@ static void f_luaopen (lua_State *L, void *ud) {
   UNUSED(ud);
   stack_init(L, L);  /* init stack */
   init_registry(L, g);
+  // 不是resize L,而是特定的resize L->G->strtab
+  // 这个名字很差
   luaS_resize(L, MINSTRTABSIZE);  /* initial size of string table */
+  // 初始化G(L)的metamethod名称
   luaT_init(L);
+  // 初始化关键字字符串表示
   luaX_init(L);
   /* pre-create memory-error message */
   g->memerrmsg = luaS_newliteral(L, MEMERRMSG);
+
+  // strtab/metamethod/key 都用了下面的方式,标记永远不用回收
   luaS_fix(g->memerrmsg);  /* it should never be collected */
   g->gcrunning = 1;  /* allow gc */
 }
@@ -239,14 +253,19 @@ static void close_state (lua_State *L) {
   (*g->frealloc)(g->ud, fromstate(L), sizeof(LG), 0);  /* free main block */
 }
 
-
+// newthread之后的state由GC回收
 LUA_API lua_State *lua_newthread (lua_State *L) {
   lua_State *L1;
   lua_lock(L);
   luaC_checkGC(L);
+
+  // FIXME: 没看出来LX的buff的作用
   L1 = &luaC_newobj(L, LUA_TTHREAD, sizeof(LX), NULL, offsetof(LX, l))->th;
+
+  // 返回值就是新的L1
   setthvalue(L, L->top, L1);
   api_incr_top(L);
+
   preinit_state(L1, G(L));
   L1->hookmask = L->hookmask;
   L1->basehookcount = L->basehookcount;
@@ -268,7 +287,8 @@ void luaE_freethread (lua_State *L, lua_State *L1) {
   luaM_free(L, l);
 }
 
-
+// 独立的state
+// 没有使用luaC_newobj,主要是因为绑定的G和GC特殊标记
 LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud) {
   int i;
   lua_State *L;
@@ -281,9 +301,15 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud) {
   L->next = NULL;
   L->tt = LUA_TTHREAD;
   g->currentwhite = bit2mask(WHITE0BIT, FIXEDBIT);
+
+  // GC标记
   L->marked = luaC_white(g);
+
   g->gckind = KGC_NORMAL;
+  
+  // L/G绑定
   preinit_state(L, g);
+
   g->frealloc = f;
   g->ud = ud;
   g->mainthread = L;

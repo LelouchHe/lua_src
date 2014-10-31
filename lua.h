@@ -37,6 +37,7 @@
 /*
 ** pseudo-indices
 */
+// 比MAXSTACK还大(是负值,不影响已有stack)
 #define LUA_REGISTRYINDEX	LUAI_FIRSTPSEUDOIDX
 #define lua_upvalueindex(i)	(LUA_REGISTRYINDEX - (i))
 

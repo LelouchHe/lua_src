@@ -101,9 +101,10 @@ static void seterrorobj (lua_State *L, int errcode, StkId oldtop) {
 }
 
 
-// 本state的错误处理 -> main错误处理 -> panic
+// 本state的错误处理 -> main错误处理 -> panic -> abort
 l_noret luaD_throw (lua_State *L, int errcode) {
   if (L->errorJmp) {  /* thread has an error handler? */
+	// 如果有的话,是在luaD_rawrunprotected链入的局部jmpbuf
     L->errorJmp->status = errcode;  /* set status */
     LUAI_THROW(L, L->errorJmp);  /* jump to it */
   }
@@ -129,6 +130,10 @@ l_noret luaD_throw (lua_State *L, int errcode) {
 // lua_error -> luaG_errormsg -> luaD_throw
 int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
   unsigned short oldnCcalls = L->nCcalls;
+
+  // 局部变量 lj,嵌入到L->errorjmp列表中
+  // 由于调用全部在一个函数里,所以是可行的
+  // (其实感觉还挺简洁)
   struct lua_longjmp lj;
   lj.status = LUA_OK;
   lj.previous = L->errorJmp;  /* chain new error handler */
@@ -279,6 +284,11 @@ static void callhook (lua_State *L, CallInfo *ci) {
 
 // 对于可变参数
 // 将固定参数移到原top之上
+// 最后的stack如下
+// | func | nil | ... | varargs1 | varargs2 | ... | arg1(原top) | arg2 | ... | argn| top
+// 可变参数就是返回arg1位置,这样
+// base之上是固定参数,用正的偏移取值,
+// base之下容量也是有限的(到func为止),用负偏移来取
 static StkId adjust_varargs (lua_State *L, Proto *p, int actual) {
   int i;
   int nfixargs = p->numparams;
@@ -339,7 +349,8 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
       goto Cfunc;
     case LUA_TCCL: {  /* C closure */
       f = clCvalue(func)->f;
-     Cfunc:
+  Cfunc:
+	  // check,当不够时,会自动grow
       luaD_checkstack(L, LUA_MINSTACK);  /* ensure minimum stack size */
 
       // 将f链入L->ci表
@@ -356,6 +367,8 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
         luaD_hook(L, LUA_HOOKCALL, -1);
       lua_unlock(L);
       // n是返回结果数
+	  // 此时stack上的正是f需要的量(func+args)
+	  // C调用,f,参数和L->top,ci->top
       n = (*f)(L);  /* do the actual call */
       lua_lock(L);
       api_checknelems(L, n);
@@ -374,9 +387,14 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
       n = cast_int(L->top - func) - 1;  /* number of real arguments */
       for (; n < p->numparams; n++)
         setnilvalue(L->top++);  /* complete missing arguments */
+
+	  // base永远指向第一个固定参数位置
       base = (!p->is_vararg) ? func + 1 : adjust_varargs(L, p, n);
       ci = next_ci(L);  /* now 'enter' new function */
       ci->nresults = nresults;
+
+	  // func并没有移动,所以可以看到,func之后不一定直接和参数相接(可变参数会移动base)
+	  // 但不影响我们的调用,因为我们使用的是base来找参数(从luaV_execute中更能看出来)
       ci->func = func;
       ci->u.l.base = base;
       ci->top = base + p->maxstacksize;
@@ -399,7 +417,8 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
   }
 }
 
-
+// C的poscall在precall中调用
+// lua的poscall在luaV_execute执行RETURN时调用
 // 删除ci,设置返回值
 int luaD_poscall (lua_State *L, StkId firstResult) {
   StkId res;
@@ -413,6 +432,7 @@ int luaD_poscall (lua_State *L, StkId firstResult) {
     }
     L->oldpc = ci->previous->u.l.savedpc;  /* 'oldpc' for caller function */
   }
+  // stack上的func对象也要删除,所以结果从func开始
   res = ci->func;  /* res == final position of 1st result */
   wanted = ci->nresults;
   L->ci = ci = ci->previous;  /* back to caller */
@@ -442,6 +462,8 @@ void luaD_call (lua_State *L, StkId func, int nResults, int allowyield) {
     else if (L->nCcalls >= (LUAI_MAXCCALLS + (LUAI_MAXCCALLS>>3)))
       luaD_throw(L, LUA_ERRERR);  /* error while handing stack error */
   }
+
+  // nny表示不允许yield的调用个数,每次luaD_call都会累加,只要不为0,调用就不会构建ctx/k
   if (!allowyield) L->nny++;
   if (!luaD_precall(L, func, nResults))  /* is a Lua function? */
     luaV_execute(L);  /* call it */
@@ -450,7 +472,8 @@ void luaD_call (lua_State *L, StkId func, int nResults, int allowyield) {
   luaC_checkGC(L);
 }
 
-
+// lua_resume -> luaD_rawrunprotected -> unroll -> finishCcall
+// 之所以会在protected下,因为finishCcall会执行k函数,这个过程还会yield的
 static void finishCcall (lua_State *L) {
   CallInfo *ci = L->ci;
   int n;
@@ -465,6 +488,7 @@ static void finishCcall (lua_State *L) {
   ci->callstatus = (ci->callstatus & ~(CIST_YPCALL | CIST_STAT)) | CIST_YIELDED;
   lua_unlock(L);
 // TODO: 这个调用做什么
+  // k是xx_callk系列提供的continue函数,用于C在yield+resume后执行的
   n = (*ci->u.c.k)(L);
   lua_lock(L);
   api_checknelems(L, n);
@@ -502,13 +526,13 @@ static CallInfo *findpcall (lua_State *L) {
 
 
 // 这些信息都在lua_pcallk处设置
-// 如果不是从lua_pcallk处来,就返回0,无保护
 static int recover (lua_State *L, int status) {
   StkId oldtop;
   CallInfo *ci = findpcall(L);
   // 找到pcallk处
   if (ci == NULL) return 0;  /* no recovery point */
   /* "finish" luaD_pcall */
+  // extra都是之前的函数,在lua_pcallk和lua_yieldk中设置
   oldtop = restorestack(L, ci->extra);
   luaF_close(L, oldtop);
   // 设置错误信息
@@ -581,14 +605,18 @@ static void resume (lua_State *L, void *ud) {
   lua_assert(nCcalls == L->nCcalls);
 }
 
-
+// stack是普通调用的情况,所以在resume调用时,才能执行
 LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs) {
   int status;
   lua_lock(L);
   luai_userstateresume(L, nargs);
   L->nCcalls = (from) ? from->nCcalls + 1 : 1;
+  // 给luaD_call的累加提供初始值
+  // 也就是说,这里不是清零,而是初始而已,所有的coroutine都需要resume才能运行
   L->nny = 0;  /* allow yields */
   api_checknelems(L, (L->status == LUA_OK) ? nargs + 1 : nargs);
+
+  // 有错误/yield,都会返回
   status = luaD_rawrunprotected(L, resume, L->top - nargs);
   if (status == -1)  /* error calling 'lua_resume'? */
     status = LUA_ERRRUN;
@@ -620,6 +648,7 @@ LUA_API int lua_yieldk (lua_State *L, int nresults, int ctx, lua_CFunction k) {
   lua_lock(L);
   api_checknelems(L, nresults);
   // nny>0: 不允许yield
+  // 由luaD_call的allyield参数进行累加
   if (L->nny > 0) {
     if (L != G(L)->mainthread)
       luaG_runerror(L, "attempt to yield across metamethod/C-call boundary");
@@ -643,6 +672,7 @@ LUA_API int lua_yieldk (lua_State *L, int nresults, int ctx, lua_CFunction k) {
     // yield是在resume中返回
     luaD_throw(L, LUA_YIELD);
   }
+  // 只有isLua为true时,才会走到这里
   lua_assert(ci->callstatus & CIST_HOOKED);  /* must be inside a hook */
   lua_unlock(L);
   return 0;  /* return to 'luaD_hook' */
@@ -652,6 +682,9 @@ LUA_API int lua_yieldk (lua_State *L, int nresults, int ctx, lua_CFunction k) {
 // 不提供ctx和k
 // 这是同lua_pcallk的区别
 // lua_pcallk对于无需yield的调用,使用这个
+// func做跳转,看到有3中情况:1.lua_pcallk中,单纯的调用old_top; 2. luaD_protectedparser; 3. GCTM
+// old_top是需要调用的函数
+// ef是错误处理函数
 int luaD_pcall (lua_State *L, Pfunc func, void *u,
                 ptrdiff_t old_top, ptrdiff_t ef) {
   int status;
@@ -667,6 +700,8 @@ int luaD_pcall (lua_State *L, Pfunc func, void *u,
 
     // 错误入栈
     seterrorobj(L, status, oldtop);
+
+	// 恢复状态,因为有error,表明从longjmp回来
     L->ci = old_ci;
     L->allowhook = old_allowhooks;
     L->nny = old_nny;

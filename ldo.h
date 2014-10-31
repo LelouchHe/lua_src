@@ -19,6 +19,7 @@
 
 #define incr_top(L) {L->top++; luaD_checkstack(L,0);}
 
+// 应该是很多时候无法直接传递指针,所以就传递与一个固定值的偏移L->stack
 // 计算偏移
 #define savestack(L,p)		((char *)(p) - (char *)L->stack)
 // 恢复偏移

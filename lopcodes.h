@@ -30,9 +30,9 @@
 
 
 // iABC : | B  | C | A | opc |
-// iABx : | B      | A | opc |
-// iAsBx: | sB     | A | opc |
-// iAx  : |          A | opc |
+// iABx : | Bx     | A | opc |
+// iAsBx: | sBx    | A | opc |
+// iAx  : |          Ax| opc |
 enum OpMode {iABC, iABx, iAsBx, iAx};  /* basic instruction format */
 
 
@@ -113,6 +113,7 @@ enum OpMode {iABC, iABx, iAsBx, iAx};  /* basic instruction format */
 #define GETARG_Ax(i)	getarg(i, POS_Ax, SIZE_Ax)
 #define SETARG_Ax(i,v)	setarg(i, v, POS_Ax, SIZE_Ax)
 
+// 有符号的sBx,主要是为了表达jmp
 #define GETARG_sBx(i)	(GETARG_Bx(i)-MAXARG_sBx)
 #define SETARG_sBx(i,b)	SETARG_Bx((i),cast(unsigned int, (b)+MAXARG_sBx))
 
@@ -135,6 +136,9 @@ enum OpMode {iABC, iABx, iAsBx, iAx};  /* basic instruction format */
 */
 
 /* this bit 1 means constant (0 means register) */
+// 最高位表示常量 or 寄存器
+// 常量保存在固定的常量表中(val_(o)->gc->cl.l.p->k)
+// 寄存器其实就是stack上的固定参数下标
 #define BITRK		(1 << (SIZE_B - 1))
 
 /* test whether value is a constant */
@@ -166,17 +170,20 @@ enum OpMode {iABC, iABx, iAsBx, iAx};  /* basic instruction format */
 ** grep "ORDER OP" if you change these enums
 */
 
+// 结合luaV_execute看更合适
 typedef enum {
 /*----------------------------------------------------------------------
 name		args	description
 ------------------------------------------------------------------------*/
 OP_MOVE,/*	A B	R(A) := R(B)					*/
+
 OP_LOADK,/*	A Bx	R(A) := Kst(Bx)					*/
+// extra arg是保存在下一个指定的,iAx格式
 OP_LOADKX,/*	A 	R(A) := Kst(extra arg)				*/
 OP_LOADBOOL,/*	A B C	R(A) := (Bool)B; if (C) pc++			*/
 OP_LOADNIL,/*	A B	R(A), R(A+1), ..., R(A+B) := nil		*/
-OP_GETUPVAL,/*	A B	R(A) := UpValue[B]				*/
 
+OP_GETUPVAL,/*	A B	R(A) := UpValue[B]				*/
 OP_GETTABUP,/*	A B C	R(A) := UpValue[B][RK(C)]			*/
 OP_GETTABLE,/*	A B C	R(A) := R(B)[RK(C)]				*/
 
@@ -186,6 +193,7 @@ OP_SETTABLE,/*	A B C	R(A)[RK(B)] := RK(C)				*/
 
 OP_NEWTABLE,/*	A B C	R(A) := {} (size = B,C)				*/
 
+// FIXME: 这是什么意思?
 OP_SELF,/*	A B C	R(A+1) := R(B); R(A) := R(B)[RK(C)]		*/
 
 OP_ADD,/*	A B C	R(A) := RK(B) + RK(C)				*/
@@ -201,15 +209,22 @@ OP_LEN,/*	A B	R(A) := length of R(B)				*/
 OP_CONCAT,/*	A B C	R(A) := R(B).. ... ..R(C)			*/
 
 OP_JMP,/*	A sBx	pc+=sBx; if (A) close all upvalues >= R(A) + 1	*/
+// 如果不满足条件,则jmp nextA, nextsBx+1(+1主要是为了相对于next指令而已)
 OP_EQ,/*	A B C	if ((RK(B) == RK(C)) ~= A) then pc++		*/
 OP_LT,/*	A B C	if ((RK(B) <  RK(C)) ~= A) then pc++		*/
 OP_LE,/*	A B C	if ((RK(B) <= RK(C)) ~= A) then pc++		*/
 
+// A与C同bool属性,则pc++(跳过next指令)
+// 否则,jmp nextA, nextsBx+1
 OP_TEST,/*	A C	if not (R(A) <=> C) then pc++			*/
 OP_TESTSET,/*	A B C	if (R(B) <=> C) then R(A) := R(B) else pc++	*/
 
+// nparams  = B - 1
+// nresults = C - 1
 OP_CALL,/*	A B C	R(A), ... ,R(A+C-2) := R(A)(R(A+1), ... ,R(A+B-1)) */
+// nresults = C - 1 = LUA_MULTRET
 OP_TAILCALL,/*	A B C	return R(A)(R(A+1), ... ,R(A+B-1))		*/
+// nresults = B - 1
 OP_RETURN,/*	A B	return R(A), ... ,R(A+B-2)	(see note)	*/
 
 OP_FORLOOP,/*	A sBx	R(A)+=R(A+2);
@@ -219,10 +234,12 @@ OP_FORPREP,/*	A sBx	R(A)-=R(A+2); pc+=sBx				*/
 OP_TFORCALL,/*	A C	R(A+3), ... ,R(A+2+C) := R(A)(R(A+1), R(A+2));	*/
 OP_TFORLOOP,/*	A sBx	if R(A+1) ~= nil then { R(A)=R(A+1); pc += sBx }*/
 
+// C == 0时,使用extra arg(下一条指令)
 OP_SETLIST,/*	A B C	R(A)[(C-1)*FPF+i] := R(A+i), 1 <= i <= B	*/
 
 OP_CLOSURE,/*	A Bx	R(A) := closure(KPROTO[Bx])			*/
 
+// nvarargs = B - 1
 OP_VARARG,/*	A B	R(A), R(A+1), ..., R(A+B-2) = vararg		*/
 
 OP_EXTRAARG/*	Ax	extra (larger) argument for previous opcode	*/
