@@ -13,7 +13,7 @@
 #include "llimits.h"
 #include "lua.h"
 
-
+// 感觉没有处理ERRORSTACKSIZE?
 #define luaM_reallocv(L,b,on,n,e) \
 	((cast(size_t, (n)+1) > MAX_SIZET/(e)) ?  /* +1 to avoid warnings */ \
 		(luaM_toobig(L), (void *)0) : \

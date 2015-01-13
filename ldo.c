@@ -77,10 +77,12 @@
 struct lua_longjmp {
   struct lua_longjmp *previous;
   luai_jmpbuf b;
+
+  // 在luaD_throw中设置
   volatile int status;  /* error code */
 };
 
-
+// 设置错误信息,丢弃oldtop之上
 static void seterrorobj (lua_State *L, int errcode, StkId oldtop) {
   switch (errcode) {
     case LUA_ERRMEM: {  /* memory error? */
@@ -102,6 +104,7 @@ static void seterrorobj (lua_State *L, int errcode, StkId oldtop) {
 
 
 // 本state的错误处理 -> main错误处理 -> panic -> abort
+// 错误信息一般在L的栈顶,如果非本L处理,要先移动到main的栈顶
 l_noret luaD_throw (lua_State *L, int errcode) {
   if (L->errorJmp) {  /* thread has an error handler? */
 	// 如果有的话,是在luaD_rawrunprotected链入的局部jmpbuf
@@ -129,6 +132,9 @@ l_noret luaD_throw (lua_State *L, int errcode) {
 // 异常时仍在跳回这里
 // lua_error -> luaG_errormsg -> luaD_throw
 int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
+  // FIXME: nCcalls有什么作用?
+  // luaD_call会在调用时增加,调用结束后减少
+  // lua_yieldk也会减少(因为返回了)
   unsigned short oldnCcalls = L->nCcalls;
 
   // 局部变量 lj,嵌入到L->errorjmp列表中
@@ -150,7 +156,8 @@ int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
 
 
 // 可以看到,如果top是偏移而不是指针,有很多好处(此处的操作就免了)
-// 但为什么没有呢?
+// 但为什么没有呢? 需要区分指针和偏移的情况
+// 此时只是将L->stack指向了新的位置,设置好初值
 static void correctstack (lua_State *L, TValue *oldstack) {
   CallInfo *ci;
   GCObject *up;
@@ -177,28 +184,40 @@ static void correctstack (lua_State *L, TValue *oldstack) {
 
 
 // 重新分配栈空间
+// FIXME: newsize == ERRORSTACKSIZE时,会怎么处理?
+// 随后会有luaG_runerror的调用
 void luaD_reallocstack (lua_State *L, int newsize) {
   TValue *oldstack = L->stack;
   int lim = L->stacksize;
   lua_assert(newsize <= LUAI_MAXSTACK || newsize == ERRORSTACKSIZE);
   lua_assert(L->stack_last - L->stack == L->stacksize - EXTRA_STACK);
   luaM_reallocvector(L, L->stack, L->stacksize, newsize, TValue);
+
+  // 初值清零
   for (; lim < newsize; lim++)
     setnilvalue(L->stack + lim); /* erase new segment */
   L->stacksize = newsize;
   L->stack_last = L->stack + newsize - EXTRA_STACK;
+
+  // 调整top/upv/ci
+  // 后两者都是指针
   correctstack(L, oldstack);
 }
 
 
 // 扩展L的栈
+// state的stack如下:
+// | L->stack | ... | L->top(当前使用的最大值) | ... | L->ci->top(当前调用能用的最大值) | .. | L->stack_last | EXTRA_STACK |
+// 整体大小为L->stacksize
 void luaD_growstack (lua_State *L, int n) {
   int size = L->stacksize;
   if (size > LUAI_MAXSTACK)  /* error after extra size? */
     luaD_throw(L, LUA_ERRERR);
   else {
+	// 只考虑当前使用到的stack大小(top - stack)
     int needed = cast_int(L->top - L->stack) + n + EXTRA_STACK;
     int newsize = 2 * size;
+
     if (newsize > LUAI_MAXSTACK) newsize = LUAI_MAXSTACK;
     if (newsize < needed) newsize = needed;
     if (newsize > LUAI_MAXSTACK) {  /* stack overflow? */
@@ -228,6 +247,8 @@ static int stackinuse (lua_State *L) {
 // inuse <= stacksize
 void luaD_shrinkstack (lua_State *L) {
   int inuse = stackinuse(L);
+
+  // 这里的goodsize是一个估量值,用于判断是否要减小堆栈
   int goodsize = inuse + (inuse / 8) + 2*EXTRA_STACK;
   if (goodsize > LUAI_MAXSTACK) goodsize = LUAI_MAXSTACK;
   if (inuse > LUAI_MAXSTACK ||  /* handling stack overflow? */
@@ -241,6 +262,7 @@ void luaD_shrinkstack (lua_State *L) {
 // 没有改动任何环境
 // save -> restore
 void luaD_hook (lua_State *L, int event, int line) {
+  // FIXME: 这里的hook是哪里设置的呢?
   lua_Hook hook = L->hook;
   if (hook && L->allowhook) {
     CallInfo *ci = L->ci;
@@ -266,7 +288,7 @@ void luaD_hook (lua_State *L, int event, int line) {
   }
 }
 
-
+// lua的尾递归需要特别处理,所以使用callhook进行预处理
 static void callhook (lua_State *L, CallInfo *ci) {
   int hook = LUA_HOOKCALL;
   ci->u.l.savedpc++;  /* hooks assume 'pc' is already incremented */
@@ -307,10 +329,13 @@ static StkId adjust_varargs (lua_State *L, Proto *p, int actual) {
 
 
 // 将metamethod __call放到类似其他函数调用的栈底
+// 此时,对应的func就是__call函数,其上是原先的obj+参数
 static StkId tryfuncTM (lua_State *L, StkId func) {
   const TValue *tm = luaT_gettmbyobj(L, func, TM_CALL);
   StkId p;
   ptrdiff_t funcr = savestack(L, func);
+  // 可以看到,这里tm如果不是函数的话,就直接出错了
+  // 如果不这样的话,就可以实现__call的递归的
   if (!ttisfunction(tm))
     luaG_typeerror(L, func, "call");
   /* Open a hole inside the stack at `func' */
@@ -358,7 +383,7 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
       ci->nresults = nresults;
       // ci->func == func
       // TODO: 为什么不直接赋值呢?
-      // 为了统一,其他地方无法直接赋值,都是计算偏移
+      // luaD_checkstack可能会移动stack,所以只有偏移是合法的
       ci->func = restorestack(L, funcr);
       ci->top = L->top + LUA_MINSTACK;
       lua_assert(ci->top <= L->stack_last);
@@ -378,6 +403,7 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
     case LUA_TLCL: {  /* Lua function: prepare its call */
       StkId base;
       Proto *p = clLvalue(func)->p;
+	  // 这里有可能移stack,所以下面还得用偏移取值
       luaD_checkstack(L, p->maxstacksize);
       func = restorestack(L, funcr);
 
@@ -420,6 +446,9 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
 // C的poscall在precall中调用
 // lua的poscall在luaV_execute执行RETURN时调用
 // 删除ci,设置返回值
+// 由于有可变参数,所以函数返回的结果不一定是正好的,有可能有空洞
+// 应该说以base为底是正好的
+// 此处就是移动到原先的func处
 int luaD_poscall (lua_State *L, StkId firstResult) {
   StkId res;
   int wanted, i;
@@ -464,6 +493,7 @@ void luaD_call (lua_State *L, StkId func, int nResults, int allowyield) {
   }
 
   // nny表示不允许yield的调用个数,每次luaD_call都会累加,只要不为0,调用就不会构建ctx/k
+  // 应该只在resume中清零(新开的thread)
   if (!allowyield) L->nny++;
   if (!luaD_precall(L, func, nResults))  /* is a Lua function? */
     luaV_execute(L);  /* call it */
@@ -496,7 +526,11 @@ static void finishCcall (lua_State *L) {
   luaD_poscall(L, L->top - n);
 }
 
-
+// lua_resume -> resume一个yield的coroutine ->unroll
+// lua_resume -> 失败后 recover + unroll
+// 可以看到,coroutine在yield之后,会返回调用resume的地方
+// 调用链上(L->ci)的所有的
+// FIXME: 为啥unroll要调用调用链上的ci呢?这个时候resume的coroutine已经返回了啊
 static void unroll (lua_State *L, void *ud) {
   UNUSED(ud);
   for (;;) {
@@ -525,6 +559,7 @@ static CallInfo *findpcall (lua_State *L) {
 }
 
 
+// 寻找到pcallk
 // 这些信息都在lua_pcallk处设置
 static int recover (lua_State *L, int status) {
   StkId oldtop;
@@ -573,18 +608,26 @@ static void resume (lua_State *L, void *ud) {
     resume_error(L, "C stack overflow", firstArg);
   // new
   if (L->status == LUA_OK) {  /* may be starting a coroutine */
+    // resume一个new的coroutine时,必须是新的state,没有ci
     if (ci != &L->base_ci)  /* not in base level? */
       resume_error(L, "cannot resume non-suspended coroutine", firstArg);
     /* coroutine is in base level; start running it */
-    if (!luaD_precall(L, firstArg - 1, LUA_MULTRET))  /* Lua function? */
+    // precall会新建需要的ci的
+	if (!luaD_precall(L, firstArg - 1, LUA_MULTRET))  /* Lua function? */
       luaV_execute(L);  /* call it */
   }
   else if (L->status != LUA_YIELD)
     resume_error(L, "cannot resume dead coroutine", firstArg);
   // suspended
+  // FIXME: 这个的ci是谁建立的?
+  // 应该是上面LUA_OK分支在precall中新建的
   else {  /* resuming from previous yield */
     L->status = LUA_OK;
+	// ci->extra保存着yield的函数
     ci->func = restorestack(L, ci->extra);
+	// FIXME: isLua为啥是判断hook?
+	// 判断的是当前ci的状态,为true表示该resume是在一个lua函数中调用的
+	// 唯一的可能则是在hook里
     if (isLua(ci))  /* yielded inside a hook? */
       luaV_execute(L);  /* just continue running Lua code */
     else {  /* 'common' yield */
@@ -598,6 +641,8 @@ static void resume (lua_State *L, void *ud) {
         api_checknelems(L, n);
         firstArg = L->top - n;  /* yield results come from continuation */
       }
+
+	  // 有没有k,都要pop掉参数的
       luaD_poscall(L, firstArg);  /* finish 'luaD_precall' */
     }
     unroll(L, NULL);
@@ -606,6 +651,7 @@ static void resume (lua_State *L, void *ud) {
 }
 
 // stack是普通调用的情况,所以在resume调用时,才能执行
+// FIXME: 只是借用了from->nCcalls,为什么要这样?
 LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs) {
   int status;
   lua_lock(L);
@@ -623,6 +669,7 @@ LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs) {
   else {  /* yield or regular error */
     while (status != LUA_OK && status != LUA_YIELD) {  /* error? */
       if (recover(L, status))  /* recover point? */
+		// recover成功,找到了pcallk
         // 此时,L->ci就是lua_pcallk调用了
         status = luaD_rawrunprotected(L, unroll, NULL);  /* run continuation */
       else {  /* unrecoverable error */
@@ -683,8 +730,6 @@ LUA_API int lua_yieldk (lua_State *L, int nresults, int ctx, lua_CFunction k) {
 // 这是同lua_pcallk的区别
 // lua_pcallk对于无需yield的调用,使用这个
 // func做跳转,看到有3中情况:1.lua_pcallk中,单纯的调用old_top; 2. luaD_protectedparser; 3. GCTM
-// old_top是需要调用的函数
-// ef是错误处理函数
 int luaD_pcall (lua_State *L, Pfunc func, void *u,
                 ptrdiff_t old_top, ptrdiff_t ef) {
   int status;
@@ -724,7 +769,7 @@ struct SParser {  /* data to `f_parser' */
   const char *name;
 };
 
-
+// 看来只检查'b'/'t'而已
 static void checkmode (lua_State *L, const char *mode, const char *x) {
   if (mode && strchr(mode, x[0]) == NULL) {
     luaO_pushfstring(L,
@@ -739,6 +784,8 @@ static void f_parser (lua_State *L, void *ud) {
   Closure *cl;
   struct SParser *p = cast(struct SParser *, ud);
   int c = zgetc(p->z);  /* read first character */
+
+  // parse的最后结果都是一个cl
   // 二进制(有固定格式)
   if (c == LUA_SIGNATURE[0]) {
     checkmode(L, p->mode, "binary");
@@ -750,7 +797,7 @@ static void f_parser (lua_State *L, void *ud) {
   }
   // meaningless?
   // 这个是动态分配的,初始分配1,当有需要时才扩展
-  // 这里用来保证是相符的
+  // 这里用来保证是proto和真正分配出来的是一致的
   lua_assert(cl->l.nupvalues == cl->l.p->sizeupvalues);
   for (i = 0; i < cl->l.nupvalues; i++) {  /* initialize upvalues */
     UpVal *up = luaF_newupval(L);

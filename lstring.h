@@ -11,11 +11,12 @@
 #include "lobject.h"
 #include "lstate.h"
 
-
+// 最后的+1是保证以'\0'结尾.这样即使string不是以'\0'结尾,也能在C中有很好的处理
 #define sizestring(s)	(sizeof(union TString)+((s)->len+1)*sizeof(char))
 
 #define sizeudata(u)	(sizeof(union Udata)+(u)->len)
 
+// -1是不计算s的'\0',因为这个会统一添加的
 #define luaS_newliteral(L, s)	(luaS_newlstr(L, "" s, \
                                  (sizeof(s)/sizeof(char))-1))
 
@@ -25,12 +26,14 @@
 /*
 ** test whether a string is a reserved word
 */
+// 初始化state(f_luaopen -> luaX_init)设置的
 #define isreserved(s)	((s)->tsv.tt == LUA_TSHRSTR && (s)->tsv.extra > 0)
 
 
 /*
 ** equality for short strings, which are always internalized
 */
+// 短字符串都是一份的,所以直接比较地址即可
 #define eqshrstr(a,b)	check_exp((a)->tsv.tt == LUA_TSHRSTR, (a) == (b))
 
 

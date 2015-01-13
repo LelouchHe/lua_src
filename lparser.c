@@ -29,6 +29,7 @@
 
 /* maximum number of local variables per function (must be smaller
    than 250, due to the bytecode format) */
+// FIXME: 这种限制在哪里?
 #define MAXVARS		200
 
 
@@ -161,7 +162,7 @@ static void checkname (LexState *ls, expdesc *e) {
   codestring(ls, e, str_checkname(ls));
 }
 
-
+// local变量的index就是注册的顺序
 static int registerlocalvar (LexState *ls, TString *varname) {
   FuncState *fs = ls->fs;
   Proto *f = fs->f;
@@ -174,7 +175,7 @@ static int registerlocalvar (LexState *ls, TString *varname) {
   return fs->nlocvars++;
 }
 
-
+// local需要在一个fs环境下注册
 static void new_localvar (LexState *ls, TString *name) {
   FuncState *fs = ls->fs;
   Dyndata *dyd = ls->dyd;
@@ -306,10 +307,12 @@ static void singlevar (LexState *ls, expdesc *var) {
   }
 }
 
-
+// nvars: 变量数
+// nexps: 表达式数
 static void adjust_assign (LexState *ls, int nvars, int nexps, expdesc *e) {
   FuncState *fs = ls->fs;
   int extra = nvars - nexps;
+  // 判断explist的值是多值,还是普通值
   if (hasmultret(e->k)) {
     extra++;  /* includes call itself */
     if (extra < 0) extra = 0;
@@ -587,6 +590,7 @@ static void close_func (LexState *ls) {
 ** 'until' closes syntactical blocks, but do not close scope,
 ** so it handled in separate.
 */
+// FIXME: 这是什么意思?
 static int block_follow (LexState *ls, int withuntil) {
   switch (ls->t.token) {
     case TK_ELSE: case TK_ELSEIF:
@@ -803,7 +807,8 @@ static void body (LexState *ls, expdesc *e, int ismethod, int line) {
   close_func(ls);
 }
 
-
+// expdesc就是explist的数据结构
+// 看来每种语法都有对应的结构来保存信息
 static int explist (LexState *ls, expdesc *v) {
   /* explist -> expr { `,' expr } */
   int n = 1;  /* at least one expression */
@@ -1427,22 +1432,27 @@ static void localfunc (LexState *ls) {
   getlocvar(fs, b.u.info)->startpc = fs->pc;
 }
 
-
+// local语句
 static void localstat (LexState *ls) {
   /* stat -> LOCAL NAME {`,' NAME} [`=' explist] */
   int nvars = 0;
   int nexps;
   expdesc e;
+  // 在当前的fs中注册local
   do {
     new_localvar(ls, str_checkname(ls));
     nvars++;
   } while (testnext(ls, ','));
+
+  // 判断语法规则
   if (testnext(ls, '='))
+	// 构建explist
     nexps = explist(ls, &e);
   else {
     e.k = VVOID;
     nexps = 0;
   }
+  // 进行赋值操作
   adjust_assign(ls, nvars, nexps, &e);
   adjustlocalvars(ls, nvars);
 }
@@ -1598,36 +1608,49 @@ static void statement (LexState *ls) {
 ** compiles the main function, which is a regular vararg function with an
 ** upvalue named LUA_ENV
 */
+// fs是作为trunk的cl
 static void mainfunc (LexState *ls, FuncState *fs) {
   BlockCnt bl;
   expdesc v;
   open_func(ls, fs, &bl);
+
   fs->f->is_vararg = 1;  /* main function is always vararg */
+  // 该upv的idx = 0, 名字是ls->envn('_ENV')
   init_exp(&v, VLOCAL, 0);  /* create and... */
   newupvalue(fs, ls->envn, &v);  /* ...set environment upvalue */
+  
   luaX_next(ls);  /* read first token */
+  
+  // statlist是lua语句合集
   statlist(ls);  /* parse main body */
+
   check(ls, TK_EOS);
   close_func(ls);
 }
 
-
+// firstchar是因为要读取一个字节才知道格式
 Closure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff,
                       Dyndata *dyd, const char *name, int firstchar) {
   LexState lexstate;
   FuncState funcstate;
+
   Closure *cl = luaF_newLclosure(L, 1);  /* create main closure */
   /* anchor closure (to avoid being collected) */
+  // 返回应该就在top
   setclLvalue(L, L->top, cl);
   incr_top(L);
+
   funcstate.f = cl->l.p = luaF_newproto(L);
   funcstate.f->source = luaS_new(L, name);  /* create and anchor TString */
   lexstate.buff = buff;
   lexstate.dyd = dyd;
   dyd->actvar.n = dyd->gt.n = dyd->label.n = 0;
   luaX_setinput(L, &lexstate, z, funcstate.f->source, firstchar);
+  
+  // parse主过程
   mainfunc(&lexstate, &funcstate);
   lua_assert(!funcstate.prev && funcstate.nups == 1 && !lexstate.fs);
+  
   /* all scopes should be correctly finished */
   lua_assert(dyd->actvar.n == 0 && dyd->gt.n == 0 && dyd->label.n == 0);
   return cl;  /* it's on the stack too */

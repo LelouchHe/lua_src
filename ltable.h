@@ -15,15 +15,17 @@
 #define gval(n)		(&(n)->i_val)
 #define gnext(n)	((n)->i_key.nk.next)
 
+// flags是tm的cache(ltm中的fasttm)
 #define invalidateTMcache(t)	((t)->flags = 0)
 
-
+// get系列普遍不需要L参数
 LUAI_FUNC const TValue *luaH_getint (Table *t, int key);
 LUAI_FUNC void luaH_setint (lua_State *L, Table *t, int key, TValue *value);
 LUAI_FUNC const TValue *luaH_getstr (Table *t, TString *key);
 LUAI_FUNC const TValue *luaH_get (Table *t, const TValue *key);
 LUAI_FUNC TValue *luaH_newkey (lua_State *L, Table *t, const TValue *key);
 LUAI_FUNC TValue *luaH_set (lua_State *L, Table *t, const TValue *key);
+
 LUAI_FUNC Table *luaH_new (lua_State *L);
 LUAI_FUNC void luaH_resize (lua_State *L, Table *t, int nasize, int nhsize);
 LUAI_FUNC void luaH_resizearray (lua_State *L, Table *t, int nasize);

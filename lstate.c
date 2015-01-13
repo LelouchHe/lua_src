@@ -260,6 +260,7 @@ LUA_API lua_State *lua_newthread (lua_State *L) {
   luaC_checkGC(L);
 
   // FIXME: 没看出来LX的buff的作用
+  // gc创建唯一的offset使用处
   L1 = &luaC_newobj(L, LUA_TTHREAD, sizeof(LX), NULL, offsetof(LX, l))->th;
 
   // 返回值就是新的L1

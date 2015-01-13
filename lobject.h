@@ -438,8 +438,10 @@ typedef union TString {
   L_Umaxalign dummy;  /* ensures maximum alignment for strings */
   struct {
     CommonHeader;
-    // >0: 暴露关键字; =0: 其他普通字符串
+	// 长字符串: extra = 1: hash已经计算; 否则,尚无
+    // 短字符串: extra > 0: 保留关键字; = 0: 其他普通字符串
     lu_byte extra;  /* reserved words for short strings; "has hash" for longs */
+	// 这个hash是统一hash,只有在放到hash时,才会取模,因此只计算一次
     unsigned int hash;
     size_t len;  /* number of characters in string */
   } tsv;
@@ -607,7 +609,10 @@ typedef struct Table {
   lu_byte lsizenode;  /* log2 of size of `node' array */
   struct Table *metatable;
   TValue *array;  /* array part */
+  // 看来node是一维数组,hash的碰撞解决很tricky
   Node *node; // hash表
+  // 一个hint,每次查找都会从lastfree向前
+  // 直到全空,此时就要rehash
   Node *lastfree;  /* any free position is before this position */
   GCObject *gclist;
   int sizearray;  /* size of `array' array */

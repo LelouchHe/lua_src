@@ -28,7 +28,7 @@ LUAI_DDEF const char *const luaT_typenames_[LUA_TOTALTAGS] = {
   "proto", "upval"  /* these last two cases are used for tests only */
 };
 
-
+// state初始化时调用
 void luaT_init (lua_State *L) {
   static const char *const luaT_eventname[] = {  /* ORDER TM */
     "__index", "__newindex",
@@ -39,6 +39,7 @@ void luaT_init (lua_State *L) {
   };
   int i;
   for (i=0; i<TM_N; i++) {
+	// 这些tm,就不属于保留字,所以extra照初始化,都是0
     G(L)->tmname[i] = luaS_new(L, luaT_eventname[i]);
     luaS_fix(G(L)->tmname[i]);  /* never collect these names */
   }
@@ -50,9 +51,12 @@ void luaT_init (lua_State *L) {
 ** tag methods
 */
 // if not present, will cache the stat 
+// 可以看到,tm的实现基于table
 const TValue *luaT_gettm (Table *events, TMS event, TString *ename) {
   const TValue *tm = luaH_getstr(events, ename);
   lua_assert(event <= TM_EQ);
+
+  // 看来flags不是set的时候直接赋值,而是gettm时,cache住的
   if (ttisnil(tm)) {  /* no tag method? */
     events->flags |= cast_byte(1u<<event);  /* cache this fact */
     return NULL;

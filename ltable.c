@@ -94,6 +94,7 @@ static Node *hashnum (const Table *t, lua_Number n) {
 ** returns the `main' position of an element in a table (that is, the index
 ** of its hash value)
 */
+// 其实就是根据key,计算出的一个初始node位置而已
 static Node *mainposition (const Table *t, const TValue *key) {
   switch (ttype(key)) {
     case LUA_TNUMBER:
@@ -124,6 +125,7 @@ static Node *mainposition (const Table *t, const TValue *key) {
 ** returns the index for `key' if `key' is an appropriate key to live in
 ** the array part of the table, -1 otherwise.
 */
+// 其实就是转成int,增加了溢出等lua_Number->int的的判断
 static int arrayindex (const TValue *key) {
   if (ttisnumber(key)) {
     lua_Number n = nvalue(key);
@@ -141,8 +143,10 @@ static int arrayindex (const TValue *key) {
 ** elements in the array part, then elements in the hash part. The
 ** beginning of a traversal is signaled by -1.
 */
+// 返回的是C的下标(从0开始)
 static int findindex (lua_State *L, Table *t, StkId key) {
   int i;
+  // nil -> -1
   if (ttisnil(key)) return -1;  /* first iteration */
   i = arrayindex(key);
   if (0 < i && i <= t->sizearray)  /* is `key' inside array part? */
@@ -154,10 +158,13 @@ static int findindex (lua_State *L, Table *t, StkId key) {
       if (luaV_rawequalobj(gkey(n), key) ||
             (ttisdeadkey(gkey(n)) && iscollectable(key) &&
              deadvalue(gkey(n)) == gcvalue(key))) {
-        i = cast_int(n - gnode(t, 0));  /* key index in hash table */
+        // n在t->node的偏移
+		i = cast_int(n - gnode(t, 0));  /* key index in hash table */
         /* hash elements are numbered after array ones */
+		// 注意,返回的是C的下标,所以i=0时,返回t->arraysize是没问题的
         return i + t->sizearray;
       }
+	  // FIXME: n->i_key.nk.next是依据什么串联的呢?
       else n = gnext(n);
       if (n == NULL)
         luaG_runerror(L, "invalid key to " LUA_QL("next"));  /* key not found */
@@ -167,9 +174,13 @@ static int findindex (lua_State *L, Table *t, StkId key) {
 
 
 // 得到key的下标,遍历array/hash找到第一个非nil的值
-// push key/value
+// key = next_key
+// key + 1 = value
+// 对于array,就是t->array[i+1]
+// 对于node,就是node[key+1]
 int luaH_next (lua_State *L, Table *t, StkId key) {
   int i = findindex(L, t, key);  /* find original element */
+  // 先i++,因为找的是next
   for (i++; i < t->sizearray; i++) {  /* try first array part */
     if (!ttisnil(&t->array[i])) {  /* a non-nil value? */
       setnvalue(key, cast_num(i+1));
@@ -177,6 +188,8 @@ int luaH_next (lua_State *L, Table *t, StkId key) {
       return 1;
     }
   }
+
+  // 这样按照node依次下去,看来node的排列很有特点
   for (i -= t->sizearray; i < sizenode(t); i++) {  /* then hash part */
     if (!ttisnil(gval(gnode(t, i)))) {  /* a non-nil value? */
       setobj2s(L, key, gkey(gnode(t, i)));
@@ -195,12 +208,17 @@ int luaH_next (lua_State *L, Table *t, StkId key) {
 */
 
 
+// 最后数组的大小,要保证至少有一般以上的元素存在
+// narray: 要分配的array大小
+// 返回: array实际数量
 static int computesizes (int nums[], int *narray) {
   int i;
   int twotoi;  /* 2^i */
   int a = 0;  /* number of elements smaller than 2^i */
   int na = 0;  /* number of elements to go to array part */
   int n = 0;  /* optimal size for array part */
+
+  // 依然需要全部遍历一遍,然后选择出满足条件的最大边界值
   for (i = 0, twotoi = 1; twotoi/2 < *narray; i++, twotoi *= 2) {
     if (nums[i] > 0) {
       a += nums[i];
@@ -216,7 +234,7 @@ static int computesizes (int nums[], int *narray) {
   return na;
 }
 
-
+// 如果key在array表达范围内,则返回1
 static int countint (const TValue *key, int *nums) {
   int k = arrayindex(key);
   if (0 < k && k <= MAXASIZE) {  /* is `key' an appropriate array index? */
@@ -227,7 +245,7 @@ static int countint (const TValue *key, int *nums) {
     return 0;
 }
 
-
+// 必须全遍历,因为可能有hole
 static int numusearray (const Table *t, int *nums) {
   int lg;
   int ttlg;  /* 2^lg */
@@ -253,6 +271,7 @@ static int numusearray (const Table *t, int *nums) {
 }
 
 
+// 计算的是以int为key的node的数量
 static int numusehash (const Table *t, int *nums, int *pnasize) {
   int totaluse = 0;  /* total number of elements */
   int ause = 0;  /* summation of `nums' */
@@ -278,7 +297,6 @@ static void setarrayvector (lua_State *L, Table *t, int size) {
 }
 
 
-// 初始化hash表
 static void setnodevector (lua_State *L, Table *t, int size) {
   int lsize;
   if (size == 0) {  /* no elements to hash part? */
@@ -303,7 +321,8 @@ static void setnodevector (lua_State *L, Table *t, int size) {
   t->lastfree = gnode(t, size);  /* all positions are free */
 }
 
-
+// nasize: 需要分配的array大小(已经保证存在元素数量多余一半)
+// nhsize: node部分实际数量
 void luaH_resize (lua_State *L, Table *t, int nasize, int nhsize) {
   int i;
   int oldasize = t->sizearray;
@@ -315,6 +334,8 @@ void luaH_resize (lua_State *L, Table *t, int nasize, int nhsize) {
   setnodevector(L, t, nhsize);
   // 缩小array时,把抛弃的部分前移至array后
   // TODO: 为什么不能只缩小呢?
+  // 因为get/set时,array/node的分界标准就是t->sizearray
+  // 如果不重新插入的话,就彻底丢失了
   if (nasize < oldasize) {  /* array part must shrink? */
     t->sizearray = nasize;
     /* re-insert elements from vanishing slice */
@@ -346,6 +367,7 @@ void luaH_resizearray (lua_State *L, Table *t, int nasize) {
 }
 
 
+// 统计array+node中以int为key的值,在这些的基础上,计算新的array+node
 static void rehash (lua_State *L, Table *t, const TValue *ek) {
   int nasize, na;
   int nums[MAXBITS+1];  /* nums[i] = number of keys with 2^(i-1) < k <= 2^i */
@@ -356,6 +378,7 @@ static void rehash (lua_State *L, Table *t, const TValue *ek) {
   totaluse = nasize;  /* all those keys are integer keys */
   totaluse += numusehash(t, nums, &nasize);  /* count keys in hash part */
   /* count extra key */
+  // 将引起rehash的key也计算
   nasize += countint(ek, nums);
   totaluse++;
   /* compute new size for array part */
@@ -380,6 +403,8 @@ Table *luaH_new (lua_State *L) {
   t->flags = cast_byte(~0);
   t->array = NULL;
   t->sizearray = 0;
+
+  // 只初始化node,array上面已经=NULL了
   setnodevector(L, t, 0);
   return t;
 }
@@ -415,6 +440,9 @@ static Node *getfreepos (Table *t) {
 // 如果位置被别的节点占了
 // 1. 该节点确实在这里(hash正确): 把当前节点移到free节点,并接入同hash链表
 // 2. 该节点不该在这里(hash不对): 把该节点移到同hash链表尾,当前节点放在这里
+// 即,同hash节点以node->i_key.nk.next串联,位置优先给mp就是该节点的key
+
+// 另.如果不用int系列函数,就不会去操作array,一律在node上进行
 TValue *luaH_newkey (lua_State *L, Table *t, const TValue *key) {
   Node *mp;
   if (ttisnil(key)) luaG_runerror(L, "table index is nil");
@@ -434,6 +462,8 @@ TValue *luaH_newkey (lua_State *L, Table *t, const TValue *key) {
 
     // 取被占位置的主位置
     othern = mainposition(t, gkey(mp));
+	// 不相等,表示othern位置的node冲突,所以才移动到这里
+	// 通过原位置的next,一路找到othern的前一个
     if (othern != mp) {  /* is colliding node out of its main position? */
       /* yes; move colliding node into free position */
       while (gnext(othern) != mp) othern = gnext(othern);  /* find previous */
@@ -480,6 +510,7 @@ const TValue *luaH_getint (Table *t, int key) {
 /*
 ** search function for short strings
 */
+// FIXME: 长string不行么?为什么单独拿出来?
 const TValue *luaH_getstr (Table *t, TString *key) {
   Node *n = hashstr(t, key);
   lua_assert(key->tsv.tt == LUA_TSHRSTR);
@@ -495,7 +526,7 @@ const TValue *luaH_getstr (Table *t, TString *key) {
 /*
 ** main search function
 */
-// 不调用metatable
+// 不调用metatable,仅从t中找
 const TValue *luaH_get (Table *t, const TValue *key) {
   switch (ttype(key)) {
     case LUA_TNIL: return luaO_nilobject;
@@ -580,9 +611,11 @@ static int unbound_search (Table *t, unsigned int j) {
 ** Try to find a boundary in table `t'. A `boundary' is an integer index
 ** such that t[i] is non-nil and t[i+1] is nil (and 0 if t[1] is nil).
 */
-// 其实这种boundary不是元素个数
+// 其实这种boundary不是元素个数,只是以int为key的一个边界
+// 所以需要考虑array+node所有的int
 int luaH_getn (Table *t) {
   unsigned int j = t->sizearray;
+  // 存在元素,但有nil,可以二分
   if (j > 0 && ttisnil(&t->array[j - 1])) {
     /* there is a boundary in the array part: (binary) search for it */
     unsigned int i = 0;

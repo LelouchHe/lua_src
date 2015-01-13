@@ -56,6 +56,8 @@ struct lua_longjmp;  /* defined in ldo.c */
 #define KGC_GEN		2	/* generational collection */
 
 // FIXME: 为啥不是TString,而是GCObject
+// 因为GC的创建有统一的方式(luaC_newobj),必须绑定到某个GCObject的list上
+// 否则,某些GC对象,就无法访问了
 typedef struct stringtable {
   GCObject **hash;
   lu_int32 nuse;  /* number of elements */

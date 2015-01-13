@@ -10,7 +10,7 @@
 #include "lobject.h"
 #include "lzio.h"
 
-
+// 之所以257开始,因为单字符也算一种类型,也在token中保存(可见llex)
 #define FIRST_RESERVED	257
 
 
@@ -33,14 +33,15 @@ enum RESERVED {
 /* number of reserved words */
 #define NUM_RESERVED	(cast(int, TK_WHILE-FIRST_RESERVED+1))
 
-
+// 数字或字符串
 typedef union {
-  lua_Number r;
-  TString *ts;
+  lua_Number r; // 直接解析成数字
+  TString *ts;  // 解析后的字符串
 } SemInfo;  /* semantics information */
 
 
 typedef struct Token {
+  // token的类型
   int token;
   SemInfo seminfo;
 } Token;
@@ -59,6 +60,7 @@ typedef struct LexState {
   ZIO *z;  /* input stream */
   Mbuffer *buff;  /* buffer for tokens */
   struct Dyndata *dyd;  /* dynamic structures used by the parser */
+  // 应该是来源,有三种形式(从luaO_chunkid可以看到)
   TString *source;  /* current source name */
   TString *envn;  /* environment variable name */
   char decpoint;  /* locale decimal point */

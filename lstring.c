@@ -42,6 +42,7 @@ int luaS_eqlngstr (TString *a, TString *b) {
 /*
 ** equality for strings
 */
+// tsv.tt有类型与子类型,必须完全匹配(因为string分长短)
 int luaS_eqstr (TString *a, TString *b) {
   return (a->tsv.tt == b->tsv.tt) &&
          (a->tsv.tt == LUA_TSHRSTR ? eqshrstr(a, b) : luaS_eqlngstr(a, b));
@@ -61,11 +62,14 @@ unsigned int luaS_hash (const char *str, size_t l, unsigned int seed) {
 /*
 ** resizes the string table
 */
+// 不论增大还是减小,总要重新定位一遍
 void luaS_resize (lua_State *L, int newsize) {
   int i;
   stringtable *tb = &G(L)->strt;
   /* cannot resize while GC is traversing strings */
   luaC_runtilstate(L, ~bitmask(GCSsweepstring));
+
+  // 如果要扩大,先把新hash表建立
   if (newsize > tb->size) {
     luaM_reallocvector(L, tb->hash, tb->size, newsize, GCObject *);
     for (i = tb->size; i < newsize; i++) tb->hash[i] = NULL;
@@ -78,9 +82,12 @@ void luaS_resize (lua_State *L, int newsize) {
       GCObject *next = gch(p)->next;  /* save next */
       // ts->hash是原始hash
       unsigned int h = lmod(gco2ts(p)->hash, newsize);  /* new position */
+
+	  // 明显的开链法
       gch(p)->next = tb->hash[h];  /* chain it */
       tb->hash[h] = p;
       resetoldbit(p);  /* see MOVE OLD rule */
+
       p = next;
     }
   }
@@ -97,14 +104,18 @@ void luaS_resize (lua_State *L, int newsize) {
 ** creates a new string object
 */
 // 可以gc的字符串
+// 为了保持对C的友好,都添加额外的'\0'
 static TString *createstrobj (lua_State *L, const char *str, size_t l,
                               int tag, unsigned int h, GCObject **list) {
   TString *ts;
   size_t totalsize;  /* total size of TString object */
   totalsize = sizeof(TString) + ((l + 1) * sizeof(char));
+
+  // 此处插入了list,即原先tb->hash[h]
   ts = &luaC_newobj(L, tag, totalsize, list, 0)->ts;
   ts->tsv.len = l;
   ts->tsv.hash = h;
+  // 初始化都是普通字符串
   ts->tsv.extra = 0;
   memcpy(ts+1, str, l*sizeof(char));
   ((char *)(ts+1))[l] = '\0';  /* ending 0 */
@@ -116,11 +127,13 @@ static TString *createstrobj (lua_State *L, const char *str, size_t l,
 ** creates a new short string, inserting it into string table
 */
 // 简单的开链法
+// 适用于短字符串
 static TString *newshrstr (lua_State *L, const char *str, size_t l,
                                        unsigned int h) {
   GCObject **list;  /* (pointer to) list where it will be inserted */
   stringtable *tb = &G(L)->strt;
   TString *s;
+  // 扩增
   if (tb->nuse >= cast(lu_int32, tb->size) && tb->size <= MAX_INT/2)
     luaS_resize(L, tb->size*2);  /* too crowded */
 
@@ -180,7 +193,7 @@ TString *luaS_new (lua_State *L, const char *str) {
   return luaS_newlstr(L, str, strlen(str));
 }
 
-
+// FIXME: 为啥在lstring中定义这个函数?
 Udata *luaS_newudata (lua_State *L, size_t s, Table *e) {
   Udata *u;
   if (s > MAX_SIZET - sizeof(Udata))

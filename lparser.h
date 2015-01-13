@@ -111,7 +111,7 @@ typedef struct FuncState {
   lu_byte freereg;  /* first free register */
 } FuncState;
 
-
+// parse之后得到的是匿名的cl
 LUAI_FUNC Closure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff,
                                 Dyndata *dyd, const char *name, int firstchar);
 

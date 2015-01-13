@@ -218,6 +218,7 @@ void luaC_checkupvalcolor (global_State *g, UpVal *uv) {
 ** it to '*list'. 'offset' tells how many bytes to allocate before the
 ** object itself (used only by states).
 */
+// list == NULL: 插入到全局gclist(G(L)->allgc)
 GCObject *luaC_newobj (lua_State *L, int tt, size_t sz, GCObject **list,
                        int offset) {
   global_State *g = G(L);

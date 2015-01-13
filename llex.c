@@ -24,7 +24,7 @@
 #include "lzio.h"
 
 
-
+// 取下一个字符
 #define next(ls) (ls->current = zgetc(ls->z))
 
 
@@ -42,7 +42,7 @@ static const char *const luaX_tokens [] = {
     "<number>", "<name>", "<string>"
 };
 
-
+// 保存在临时缓存 ls->buff中
 #define save_and_next(ls) (save(ls, ls->current), next(ls))
 
 
@@ -51,6 +51,7 @@ static l_noret lexerror (LexState *ls, const char *msg, int token);
 
 static void save (LexState *ls, int c) {
   Mbuffer *b = ls->buff;
+  // 缓冲不够,重新申请
   if (luaZ_bufflen(b) + 1 > luaZ_sizebuffer(b)) {
     size_t newsize;
     if (luaZ_sizebuffer(b) >= MAX_SIZET/2)
@@ -61,7 +62,7 @@ static void save (LexState *ls, int c) {
   b->buffer[luaZ_bufflen(b)++] = cast(char, c);
 }
 
-
+// 初始化保留字列表(短字符串,extra>0)
 void luaX_init (lua_State *L) {
   int i;
   for (i=0; i<NUM_RESERVED; i++) {
@@ -71,8 +72,9 @@ void luaX_init (lua_State *L) {
   }
 }
 
-
+// 将token的字符串形式入栈
 const char *luaX_token2str (LexState *ls, int token) {
+  // 不是保留字token,直接入栈
   if (token < FIRST_RESERVED) {
     lua_assert(token == cast(unsigned char, token));
     return (lisprint(token)) ? luaO_pushfstring(ls->L, LUA_QL("%c"), token) :
@@ -80,6 +82,7 @@ const char *luaX_token2str (LexState *ls, int token) {
   }
   else {
     const char *s = luaX_tokens[token - FIRST_RESERVED];
+	// TK_EOS后面就不是普通的token,而是一类,所以返回名称
     if (token < TK_EOS)
       return luaO_pushfstring(ls->L, LUA_QS, s);
     else
@@ -88,11 +91,15 @@ const char *luaX_token2str (LexState *ls, int token) {
 }
 
 
+// 输出token的字符串形式
+// 不同于luaX_token2str,对于三类通用token,要返回实际的值
 static const char *txtToken (LexState *ls, int token) {
   switch (token) {
+	// 以下三种,是作为一类token来处理的
     case TK_NAME:
     case TK_STRING:
     case TK_NUMBER:
+	  // 标记token计数(ls->current = '\0')
       save(ls, '\0');
       return luaO_pushfstring(ls->L, LUA_QS, luaZ_buffer(ls->buff));
     default:
@@ -100,7 +107,7 @@ static const char *txtToken (LexState *ls, int token) {
   }
 }
 
-
+// 输出错误,也要在luaD_rawrunprotected下调用
 static l_noret lexerror (LexState *ls, const char *msg, int token) {
   char buff[LUA_IDSIZE];
   luaO_chunkid(buff, getstr(ls->source), LUA_IDSIZE);
@@ -121,6 +128,7 @@ l_noret luaX_syntaxerror (LexState *ls, const char *msg) {
 ** it will not be collected until the end of the function's compilation
 ** (by that time it should be anchored in function's prototype)
 */
+// 在当前ls->fs->h插入一个为string的key
 TString *luaX_newstring (LexState *ls, const char *str, size_t l) {
   lua_State *L = ls->L;
   TValue *o;  /* entry for `str' */
@@ -142,6 +150,7 @@ TString *luaX_newstring (LexState *ls, const char *str, size_t l) {
 ** increment line number and skips newline sequence (any of
 ** \n, \r, \n\r, or \r\n)
 */
+// 只有在遇到结尾时,才能使用(lua_assert中确认)
 static void inclinenumber (LexState *ls) {
   int old = ls->current;
   lua_assert(currIsNewline(ls));
@@ -152,7 +161,7 @@ static void inclinenumber (LexState *ls) {
     luaX_syntaxerror(ls, "chunk has too many lines");
 }
 
-
+// 初始化lex
 void luaX_setinput (lua_State *L, LexState *ls, ZIO *z, TString *source,
                     int firstchar) {
   ls->decpoint = '.';
@@ -178,7 +187,7 @@ void luaX_setinput (lua_State *L, LexState *ls, ZIO *z, TString *source,
 */
 
 
-
+// 只有current在set之中,才会取下一个字符
 static int check_next (LexState *ls, const char *set) {
   if (ls->current == '\0' || !strchr(set, ls->current))
     return 0;
@@ -190,6 +199,7 @@ static int check_next (LexState *ls, const char *set) {
 /*
 ** change all characters 'from' in buffer to 'to'
 */
+// 替换ls->buff中的from->to
 static void buffreplace (LexState *ls, char from, char to) {
   size_t n = luaZ_bufflen(ls->buff);
   char *p = luaZ_buffer(ls->buff);
@@ -226,6 +236,8 @@ static void trydecpoint (LexState *ls, SemInfo *seminfo) {
 ** this function is quite liberal in what it accepts, as 'luaO_str2d'
 ** will reject ill-formed numerals.
 */
+// 先判断首字符是数字,才会进入这里
+// 最后的结果保存在seminfo中
 static void read_numeral (LexState *ls, SemInfo *seminfo) {
   const char *expo = "Ee";
   int first = ls->current;
@@ -251,6 +263,8 @@ static void read_numeral (LexState *ls, SemInfo *seminfo) {
 ** skip a sequence '[=*[' or ']=*]' and return its number of '='s or
 ** -1 if sequence is malformed
 */
+// 先判断首位是'['/']',才会进入这里
+// 返回时,如果正常的话,ls->curret是'['|']'
 static int skip_sep (LexState *ls) {
   int count = 0;
   int s = ls->current;
@@ -260,20 +274,28 @@ static int skip_sep (LexState *ls) {
     save_and_next(ls);
     count++;
   }
+  // 正数: [=*[
+  // 负数: [=*x 不止是-1
   return (ls->current == s) ? count : (-count) - 1;
 }
 
-
+// [=*[之后的字符串
+// ls->current == '['(最后一个)
+// sep是之前的'[=*['中'='数量
 static void read_long_string (LexState *ls, SemInfo *seminfo, int sep) {
   save_and_next(ls);  /* skip 2nd `[' */
+  // 这里就是[[能跳过首个换行符的原因
+  // 先判断是换行,然后读取
   if (currIsNewline(ls))  /* string starts with a newline? */
     inclinenumber(ls);  /* skip it */
   for (;;) {
     switch (ls->current) {
+	  // 错误的结束符
       case EOZ:
         lexerror(ls, (seminfo) ? "unfinished long string" :
                                  "unfinished long comment", TK_EOS);
         break;  /* to avoid warnings */
+	  // 先看到']',再去skip_sep
       case ']': {
         if (skip_sep(ls) == sep) {
           save_and_next(ls);  /* skip 2nd `]' */
@@ -284,21 +306,25 @@ static void read_long_string (LexState *ls, SemInfo *seminfo, int sep) {
       case '\n': case '\r': {
         save(ls, '\n');
         inclinenumber(ls);
+		// 如果seminfo为NULL,没有必要处理
         if (!seminfo) luaZ_resetbuffer(ls->buff);  /* avoid wasting space */
         break;
       }
       default: {
+		// 一样的处理,没有seminfo,就简单的跳过即可
         if (seminfo) save_and_next(ls);
         else next(ls);
       }
     }
   } endloop:
+  // 错误的话,就不会到这里来了,直接lexerror掉了
+  // sep + 2: 跳过[=*[和]=*]
   if (seminfo)
     seminfo->ts = luaX_newstring(ls, luaZ_buffer(ls->buff) + (2 + sep),
                                      luaZ_bufflen(ls->buff) - 2*(2 + sep));
 }
 
-
+// c是esc字符串,n是数量,msg是错误信息
 static void escerror (LexState *ls, int *c, int n, const char *msg) {
   int i;
   luaZ_resetbuffer(ls->buff);  /* prepare error message */
@@ -308,7 +334,7 @@ static void escerror (LexState *ls, int *c, int n, const char *msg) {
   lexerror(ls, msg, TK_STRING);
 }
 
-
+// \'xXX'
 static int readhexaesc (LexState *ls) {
   int c[3], i;  /* keep input for error message */
   int r = 0;  /* result accumulator */
@@ -322,7 +348,7 @@ static int readhexaesc (LexState *ls) {
   return r;
 }
 
-
+// \'DDD'
 static int readdecesc (LexState *ls) {
   int c[3], i;
   int r = 0;  /* result accumulator */
@@ -336,7 +362,7 @@ static int readdecesc (LexState *ls) {
   return r;
 }
 
-
+// del应该指'/"
 static void read_string (LexState *ls, int del, SemInfo *seminfo) {
   save_and_next(ls);  /* keep delimiter (for error messages) */
   while (ls->current != del) {
@@ -344,6 +370,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
       case EOZ:
         lexerror(ls, "unfinished string", TK_EOS);
         break;  /* to avoid warnings */
+	  // 单行string不允许换行
       case '\n':
       case '\r':
         lexerror(ls, "unfinished string", TK_STRING);
@@ -359,13 +386,17 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
           case 'r': c = '\r'; goto read_save;
           case 't': c = '\t'; goto read_save;
           case 'v': c = '\v'; goto read_save;
+		  // \xXX
           case 'x': c = readhexaesc(ls); goto read_save;
           case '\n': case '\r':
+			// inclinenumber中已经读取了换行符,所以这里不需要read了
             inclinenumber(ls); c = '\n'; goto only_save;
+		  // 遇到这个类似del的字符,要保存并readnext,否则下次循环就跳出了
           case '\\': case '\"': case '\'':
             c = ls->current; goto read_save;
           case EOZ: goto no_save;  /* will raise an error next loop */
-          case 'z': {  /* zap following span of spaces */
+          // \z后可跟无限的空格或者换行,这个最后不会包含在ls->buff中
+		  case 'z': {  /* zap following span of spaces */
             next(ls);  /* skip the 'z' */
             while (lisspace(ls->current)) {
               if (currIsNewline(ls)) inclinenumber(ls);
@@ -374,6 +405,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
             goto no_save;
           }
           default: {
+			// \ddd
             if (!lisdigit(ls->current))
               escerror(ls, &ls->current, 1, "invalid escape sequence");
             /* digital escape \ddd */
@@ -386,6 +418,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
        no_save: break;
       }
       default:
+		// 普通字符
         save_and_next(ls);
     }
   }
@@ -394,25 +427,32 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
                                    luaZ_bufflen(ls->buff) - 2);
 }
 
-
+// 本质来讲,就是一个状态机,通过预判一个字符,来决定下一个token是什么
+// 解析一个新的seminfo
+// 返回的是token类型
 static int llex (LexState *ls, SemInfo *seminfo) {
   luaZ_resetbuffer(ls->buff);
   for (;;) {
     switch (ls->current) {
+	  // 换行符不会作为token读入
       case '\n': case '\r': {  /* line breaks */
         inclinenumber(ls);
         break;
       }
+	  // 空格亦然
       case ' ': case '\f': case '\t': case '\v': {  /* spaces */
         next(ls);
         break;
       }
       case '-': {  /* '-' or '--' (comment) */
         next(ls);
+		// 直接return可以么?应该有特别的处理
         if (ls->current != '-') return '-';
+		// 可以看到,注释全都被删除了
         /* else is a comment */
         next(ls);
         if (ls->current == '[') {  /* long comment? */
+		  // 先看到'[',在计算=数量,然后read_long_string
           int sep = skip_sep(ls);
           luaZ_resetbuffer(ls->buff);  /* `skip_sep' may dirty the buffer */
           if (sep >= 0) {
@@ -435,6 +475,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
         else if (sep == -1) return '[';
         else lexerror(ls, "invalid long string delimiter", TK_STRING);
       }
+	  // = | ==
       case '=': {
         next(ls);
         if (ls->current != '=') return '=';
@@ -482,6 +523,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
       case EOZ: {
         return TK_EOS;
       }
+	  // 一般的id
       default: {
         if (lislalpha(ls->current)) {  /* identifier or reserved word? */
           TString *ts;
@@ -508,6 +550,9 @@ static int llex (LexState *ls, SemInfo *seminfo) {
 }
 
 
+// 可见,读取分配两种途径
+// buf -> lookahead -> t
+// buf -> t
 void luaX_next (LexState *ls) {
   ls->lastline = ls->linenumber;
   if (ls->lookahead.token != TK_EOS) {  /* is there a look-ahead token? */
